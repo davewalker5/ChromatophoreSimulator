@@ -142,3 +142,6 @@ cython_debug/
 .idea/
 proto/
 .ruff_cache/
+
+# Browser development dependencies
+node_modules/
