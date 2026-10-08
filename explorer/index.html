@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Explore cephalopod colour change through 2,500 simulated pigment organs. Try patterns, waves and two views of the same living surface."
+    />
+    <title>Chromatophore Simulator · Field Notes</title>
+    <link rel="icon" href="assets/octopus.png" type="image/png" />
+    <link rel="stylesheet" href="css/simulator.css" />
+    <script type="module" src="js/app.js"></script>
+  </head>
+  <body>
+    <main id="simulator" aria-labelledby="page-title">
+      <header class="page-header">
+        <div class="brand">
+          <img src="assets/octopus.png" width="52" height="52" alt="" />
+          <div>
+            <p class="eyebrow">FIELD NOTES / INTERACTIVE EXPLORER</p>
+            <h1 id="page-title">Chromatophore Simulator</h1>
+            <p class="subtitle">
+              Small movements. Changing patterns. A window into cephalopod colour.
+            </p>
+          </div>
+        </div>
+        <span class="badge">Runs in your browser</span>
+      </header>
+      <noscript><p class="error">Enable JavaScript to use this interactive simulator.</p></noscript>
+      <p id="startup-error" class="error" role="alert" hidden></p>
+      <div class="workspace">
+        <section class="visual-column" aria-label="Simulated skin">
+          <div class="card field-card">
+            <div class="field-heading">
+              <div>
+                <p class="eyebrow">THE SKIN PATCH</p>
+                <h2 id="current-pattern">Random mottle</h2>
+              </div>
+              <span class="pill">50 × 50 cells</span>
+            </div>
+            <div class="view-switch" role="group" aria-label="Viewing mode">
+              <button type="button" data-view="Chromatophores" aria-pressed="true" disabled>
+                Chromatophore View
+              </button>
+              <button type="button" data-view="Skin" aria-pressed="false" disabled>
+                Skin View
+              </button>
+            </div>
+            <div class="canvas-wrap">
+              <canvas
+                id="field"
+                width="550"
+                height="550"
+                tabindex="0"
+                role="img"
+                aria-label="Chromatophore View: 2,500 pigment organs in a 50 by 50 grid"
+                aria-describedby="view-description"
+              >
+                A 50 by 50 field of yellow, red, brown and black pigment organs, expanding and
+                contracting to form patterns.
+              </canvas>
+            </div>
+            <p id="view-description" class="view-description">
+              Each coloured disc is one pigment organ. Its radius changes as it follows a target
+              size.
+            </p>
+            <ul class="legend" aria-label="Pigment colours">
+              <li><i class="yellow"></i>Yellow</li>
+              <li><i class="red"></i>Red</li>
+              <li><i class="brown"></i>Brown</li>
+              <li><i class="black"></i>Black</li>
+            </ul>
+            <div class="field-footer">
+              <span id="activity">Preparing the field…</span>
+              <button id="hold" type="button" class="hold" data-command="hold" disabled>
+                Hold current sizes
+              </button>
+            </div>
+          </div>
+          <p id="status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+        </section>
+        <aside class="controls card" aria-label="Simulation controls">
+          <fieldset id="controls" disabled>
+            <legend class="sr-only">Simulation controls</legend>
+            <section class="control-section first">
+              <h2>01 <span>Static patterns</span></h2>
+              <p class="hint">Set a target. Watch the cells move towards it.</p>
+              <div id="patterns" class="button-grid"></div>
+            </section>
+            <section class="control-section">
+              <h2>02 <span>Dynamic displays</span></h2>
+              <p class="hint">Keep the instructions moving.</p>
+              <div id="displays" class="button-grid"></div>
+              <p class="hint flash-note">
+                Flash alternates expansion and contraction. Starts only when selected.
+              </p>
+              <label class="field" for="display-speed"
+                ><span>Display speed</span>
+                <select id="display-speed">
+                  <option value="0.5">0.5×</option>
+                  <option value="1" selected>1×</option>
+                  <option value="2">2×</option>
+                  <option value="4">4×</option>
+                </select>
+              </label>
+            </section>
+            <section class="control-section">
+              <h2>03 <span>Cell response</span></h2>
+              <label class="field" for="expansion-rate"
+                ><span>Expansion rate</span
+                ><select id="expansion-rate">
+                  <option value="0.25">0.25 units/s</option>
+                  <option value="0.5">0.5 units/s</option>
+                  <option value="1">1 unit/s</option>
+                  <option value="2">2 units/s</option>
+                  <option value="4">4 units/s</option>
+                </select></label
+              >
+              <label class="field" for="contraction-rate"
+                ><span>Contraction rate</span
+                ><select id="contraction-rate">
+                  <option value="0.25">0.25 units/s</option>
+                  <option value="0.5">0.5 units/s</option>
+                  <option value="1">1 unit/s</option>
+                  <option value="2">2 units/s</option>
+                  <option value="4">4 units/s</option>
+                </select></label
+              >
+              <label class="field" for="response-delay"
+                ><span>Response delay</span
+                ><select id="response-delay">
+                  <option value="0">0 seconds</option>
+                  <option value="0.25">0.25 seconds</option>
+                  <option value="0.5">0.5 seconds</option>
+                  <option value="1">1 second</option>
+                  <option value="2">2 seconds</option>
+                </select></label
+              >
+              <p class="hint">
+                At 0.25 units/s, full expansion takes four seconds, plus any delay.
+              </p>
+            </section>
+            <section class="control-section">
+              <h2>04 <span>Whole field</span></h2>
+              <div class="button-grid">
+                <button type="button" class="primary" data-command="expand">Expand all</button>
+                <button type="button" data-command="contract">Contract all</button>
+                <button type="button" data-command="randomise" class="wide">Randomise cells</button>
+              </div>
+            </section>
+          </fieldset>
+        </aside>
+        <section class="card explanation" aria-labelledby="about-title">
+          <h2 id="about-title">One field, two ways of seeing</h2>
+          <p>
+            Cephalopods change their appearance by expanding and contracting tiny pigment organs
+            called chromatophores. Here, every cell keeps its own size while following a shared
+            pattern.
+          </p>
+          <p>
+            <strong>Chromatophore View</strong> reveals the individual organs.
+            <strong>Skin View</strong> blends their coverage into an approximation of the whole
+            surface. Switching views keeps the same movement running.
+          </p>
+          <details>
+            <summary>How to explore</summary>
+            <p>
+              Choose a pattern, then try a dynamic display. Increase the response rates for sharper
+              movement, or lower them to see the cells lag behind their instructions.
+            </p>
+            <p>
+              Response delay makes the cells follow an earlier signal. Display speed changes the
+              instructions, not the speed of the cells themselves.
+            </p>
+            <p>
+              <strong>Hold</strong> stops movement at the current sizes. Selecting a display again
+              starts a new sequence at 1×; it does not resume the old sequence.
+            </p>
+            <p>
+              Keyboard shortcuts work while focus is inside the simulator, except in form inputs.
+              Patterns: U, B, H, V, S, M, G. Displays: W, P, F, N, L, T. Expand: E; contract: C;
+              randomise: R. Keys 1–3 cycle response settings; 4 cycles display speed. Use the Hold
+              button to stop. Tab navigates normally.
+            </p>
+          </details>
+          <p class="model-note">
+            An exploratory model inspired by cephalopods, not a biological reconstruction. Pigments
+            occupy alternating positions; skin blending approximates combined appearance rather than
+            physical skin optics.
+          </p>
+        </section>
+      </div>
+      <footer class="page-footer">
+        Inspired by the changing skin of octopuses, cuttlefish and squid.
+        <a href="LICENSE">MIT licence</a>
+      </footer>
+    </main>
+  </body>
+</html>
