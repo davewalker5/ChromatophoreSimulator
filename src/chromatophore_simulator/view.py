@@ -169,6 +169,12 @@ class Command(Enum):
     RESPONSE_DELAY = "Delay [3]"
 
 
+class PigmentAction(Enum):
+    """Shared controls for the pigment target multipliers."""
+
+    RESET = "Reset pigment levels [0]"
+
+
 class ViewMode(Enum):
     """Two presentations of the same live simulation state."""
 
@@ -180,7 +186,7 @@ class ViewMode(Enum):
 class Button:
     """A clickable command and its screen-space rectangle."""
 
-    command: Command | Pattern | ViewMode | DynamicDisplay | DynamicAction
+    command: Command | Pattern | ViewMode | DynamicDisplay | DynamicAction | Pigment | PigmentAction
     rectangle: pygame.Rect
 
 
@@ -221,6 +227,10 @@ class FieldView:
             Button(DynamicAction.HOLD, pygame.Rect(760, 485, 150, 36)),
             Button(DynamicAction.SPEED, pygame.Rect(920, 485, 150, 36)),
         )
+        self.pigment_buttons = tuple(
+            Button(pigment, pygame.Rect(760 + (index % 2) * 160, 620 + (index // 2) * 42, 150, 36))
+            for index, pigment in enumerate(Pigment)
+        ) + (Button(PigmentAction.RESET, pygame.Rect(760, 708, 310, 32)),)
         self.view_buttons = tuple(
             Button(mode, pygame.Rect(760 + index * 160, 756, 150, 42))
             for index, mode in enumerate(ViewMode)
@@ -234,7 +244,16 @@ class FieldView:
 
     def command_at(
         self, position: tuple[int, int]
-    ) -> Command | Pattern | ViewMode | DynamicDisplay | DynamicAction | None:
+    ) -> (
+        Command
+        | Pattern
+        | ViewMode
+        | DynamicDisplay
+        | DynamicAction
+        | Pigment
+        | PigmentAction
+        | None
+    ):
         """Find the button under a mouse position.
 
         :param position: Window coordinates in pixels, measured from top left.
@@ -245,6 +264,7 @@ class FieldView:
             *self.pattern_buttons,
             *self.dynamic_buttons,
             *self.view_buttons,
+            *self.pigment_buttons,
         ):
             if button.rectangle.collidepoint(position):
                 return button.command
@@ -327,6 +347,7 @@ class FieldView:
             *self.pattern_buttons,
             *self.dynamic_buttons,
             *self.view_buttons,
+            *self.pigment_buttons,
         ):
             # Hover highlighting is visual feedback only; event handling applies commands.
             colour = (
@@ -336,6 +357,16 @@ class FieldView:
             )
             pygame.draw.rect(self.surface, colour, button.rectangle, border_radius=7)
             label_text = button.command.value
+            if isinstance(button.command, Pigment):
+                index = tuple(Pigment).index(button.command)
+                label_text += f" [{index + 5}]: {field.pigment_levels[button.command]:.0%}"
+                pygame.draw.rect(
+                    self.surface,
+                    PIGMENT_COLOURS[button.command],
+                    button.rectangle.inflate(-4, -4).clip(
+                        pygame.Rect(button.rectangle.left + 2, button.rectangle.top + 2, 5, 32)
+                    ),
+                )
             if button.command is self.mode:
                 pygame.draw.rect(
                     self.surface, TEXT_COLOUR, button.rectangle, width=2, border_radius=7
@@ -475,17 +506,8 @@ class FieldView:
         self.surface.blit(skin, rectangle)
 
     def _draw_pigment_legend(self) -> None:
-        """Identify the four pigment colours and their alternating arrangement."""
-        heading = self.title_font.render("Pigments", True, TEXT_COLOUR)
-        self.surface.blit(heading, (760, 582))
-        for index, pigment in enumerate(Pigment):
-            # Match the field's 2 × 2 tile in the legend, with named colour swatches.
-            left = 760 + (index % 2) * 155
-            top = 625 + (index // 2) * 42
-            swatch = pygame.Rect(left, top, 26, 26)
-            pygame.draw.rect(self.surface, PIGMENT_COLOURS[pigment], swatch, border_radius=5)
-            pygame.draw.rect(self.surface, TEXT_COLOUR, swatch, width=1, border_radius=5)
-            label = self.font.render(pigment.value, True, TEXT_COLOUR)
-            self.surface.blit(label, (left + 36, top + 4))
-        note = self.font.render("View buttons below · Tab to switch", True, TEXT_COLOUR)
-        self.surface.blit(note, (760, 714))
+        """Label the pigment controls; buttons retain their own colour indicators."""
+        heading = self.title_font.render("Pigment levels", True, TEXT_COLOUR)
+        self.surface.blit(heading, (760, 550))
+        note = self.font.render("Click to cycle target strength", True, TEXT_COLOUR)
+        self.surface.blit(note, (760, 585))

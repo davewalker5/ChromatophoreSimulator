@@ -382,3 +382,36 @@ def test_dynamic_controls(view: FieldView, use_mouse: bool) -> None:
         view.draw(field, 60)
     app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE), field, view, Random(0))
     assert field.dynamic is None
+
+
+@pytest.mark.parametrize("use_mouse", [False, True])
+def test_pigment_controls_and_reset(view: FieldView, use_mouse: bool) -> None:
+    """Mouse and keyboard change group levels without stopping the display.
+
+    :param view: Headless renderer and control layout.
+    :param use_mouse: Exercise clickable controls rather than number shortcuts.
+    """
+    from chromatophore_simulator.dynamics import DynamicDisplay
+    from chromatophore_simulator.view import PigmentAction
+
+    field = ChromatophoreField()
+    field.start_dynamic(DynamicDisplay.FLASH)
+    controller = field.dynamic
+    commands = ((Pigment.YELLOW, pygame.K_5), (PigmentAction.RESET, pygame.K_0))
+    for command, key in commands:
+        if use_mouse:
+            button = next(button for button in view.pigment_buttons if button.command is command)
+            event = pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN, button=1, pos=button.rectangle.center
+            )
+        else:
+            event = pygame.event.Event(pygame.KEYDOWN, key=key)
+        assert app.handle_event(event, field, view, Random(1))
+        assert field.dynamic is controller
+        assert field.pigment_levels[Pigment.YELLOW] == (0 if command is Pigment.YELLOW else 1)
+        assert all(
+            field.pigment_levels[pigment] == 1
+            for pigment in Pigment
+            if pigment is not Pigment.YELLOW
+        )
+    view.draw(field, 60)

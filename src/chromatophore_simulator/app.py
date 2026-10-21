@@ -7,7 +7,7 @@ from random import Random
 import pygame
 
 from chromatophore_simulator.dynamics import DynamicDisplay
-from chromatophore_simulator.model import ChromatophoreField
+from chromatophore_simulator.model import ChromatophoreField, Pigment
 from chromatophore_simulator.patterns import Pattern
 from chromatophore_simulator.view import (
     DYNAMIC_SHORTCUTS,
@@ -16,12 +16,14 @@ from chromatophore_simulator.view import (
     Command,
     DynamicAction,
     FieldView,
+    PigmentAction,
     ViewMode,
 )
 
 TARGET_FRAMES_PER_SECOND = 60
 MAXIMUM_FRAME_SECONDS = 0.1
 RATE_PRESETS = (0.25, 0.5, 1.0, 2.0, 4.0)
+PIGMENT_LEVEL_PRESETS = (0.0, 0.25, 0.5, 0.75, 1.0)
 DELAY_PRESETS = (0.0, 0.25, 0.5, 1.0, 2.0)
 
 
@@ -37,7 +39,7 @@ def _next_preset(current: float, presets: tuple[float, ...]) -> float:
 
 def apply_command(
     field: ChromatophoreField,
-    command: Command | Pattern | DynamicDisplay | DynamicAction,
+    command: Command | Pattern | DynamicDisplay | DynamicAction | Pigment | PigmentAction,
     random_source: Random,
 ) -> None:
     """Apply a global command to the existing population.
@@ -46,6 +48,14 @@ def apply_command(
     :param command: User-selected action.
     :param random_source: Generator used for random targets.
     """
+    if isinstance(command, Pigment):
+        field.set_pigment_level(
+            command, _next_preset(field.pigment_levels[command], PIGMENT_LEVEL_PRESETS)
+        )
+        return
+    if command is PigmentAction.RESET:
+        field.reset_pigment_levels()
+        return
     if isinstance(command, DynamicDisplay):
         field.start_dynamic(command, random_source)
         return
@@ -115,6 +125,11 @@ def handle_event(
             pygame.K_3: Command.RESPONSE_DELAY,
             pygame.K_SPACE: DynamicAction.HOLD,
             pygame.K_4: DynamicAction.SPEED,
+            pygame.K_5: Pigment.YELLOW,
+            pygame.K_6: Pigment.RED,
+            pygame.K_7: Pigment.BROWN,
+            pygame.K_8: Pigment.BLACK,
+            pygame.K_0: PigmentAction.RESET,
         }.get(event.key)
         if command is None:
             command = {

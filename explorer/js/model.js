@@ -118,6 +118,40 @@ export class ChromatophoreField {
     this.targetDescription = 'Contracted';
     this.dynamic = null;
     this.dynamicRemainder = 0;
+    this._pigmentLevels = Object.fromEntries(Object.values(Pigment).map((pigment) => [pigment, 1]));
+    this.sourceTargets = new Float64Array(this.cells.length);
+  }
+
+  /** Return an immutable snapshot of group target multipliers in [0, 1]. */
+  get pigmentLevels() {
+    return Object.freeze({ ...this._pigmentLevels });
+  }
+
+  /**
+   * Scale one group's source targets; current sizes, other groups and phase remain intact.
+   * Static changes use the configured delay; dynamics apply levels on the next signal update.
+   * Held sizes become the static source. Repeated changes never compound multipliers.
+   * @param {string} pigment - Member of Pigment.
+   * @param {number} level - Finite target multiplier in [0, 1].
+   * @throws {RangeError} If pigment or level is invalid; state is unchanged.
+   */
+  setPigmentLevel(pigment, level) {
+    if (!Object.values(Pigment).includes(pigment)) throw new RangeError('Unknown pigment');
+    validateExpansion(level);
+    if (level === this._pigmentLevels[pigment]) return;
+    this._pigmentLevels[pigment] = level;
+    if (!this.dynamic) {
+      this.cells.forEach((cell, index) => {
+        if (cell.pigment === pigment)
+          cell.setTarget(this.sourceTargets[index] * level, this.response.responseDelay);
+      });
+      if (this.targetDescription === 'Held') this.targetDescription = 'Pigment mix';
+    }
+  }
+
+  /** Restore group levels to 1 without resetting current sizes or display phase. */
+  resetPigmentLevels() {
+    for (const pigment of Object.values(Pigment)) this.setPigmentLevel(pigment, 1);
   }
 
   /**
@@ -138,6 +172,7 @@ export class ChromatophoreField {
     this.dynamic = null;
     this.dynamicRemainder = 0;
     for (const cell of this.cells) cell.setTarget(cell.expansion);
+    this.sourceTargets = Float64Array.from(this.cells, (cell) => cell.expansion);
     this.targetDescription = 'Held';
   }
 
@@ -150,8 +185,13 @@ export class ChromatophoreField {
     if (targets.length !== this.cells.length) throw new RangeError('Target count must match cells');
     for (const target of targets) validateExpansion(target);
     this.dynamic = null;
+    this.sourceTargets = Float64Array.from(targets);
     for (let index = 0; index < this.cells.length; index++) {
-      this.cells[index].setTarget(targets[index], this.response.responseDelay);
+      const cell = this.cells[index];
+      cell.setTarget(
+        this.sourceTargets[index] * this._pigmentLevels[cell.pigment],
+        this.response.responseDelay,
+      );
     }
     this.targetDescription = 'Custom';
   }
@@ -204,7 +244,10 @@ export class ChromatophoreField {
         for (let index = 0; index < this.cells.length; index++) {
           // Delay already belongs to the signal history. A fresh per-cell delay
           // every frame would prevent cells from ever following a moving target.
-          if (targets) this.cells[index].setTarget(targets[index], 0);
+          if (targets) {
+            const cell = this.cells[index];
+            cell.setTarget(targets[index] * this._pigmentLevels[cell.pigment], 0);
+          }
           this.cells[index].update(DYNAMIC_STEP, this.response);
         }
       }

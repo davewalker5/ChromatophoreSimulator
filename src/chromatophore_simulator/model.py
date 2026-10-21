@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
 from random import Random
+from types import MappingProxyType
 
 from chromatophore_simulator.dynamics import DYNAMIC_STEP, DynamicController, DynamicDisplay
 from chromatophore_simulator.patterns import Pattern, generate_targets
@@ -184,6 +185,42 @@ class ChromatophoreField:
         self.target_description = "Contracted"
         self.dynamic: DynamicController | None = None
         self._dynamic_remainder = 0.0
+        self._pigment_levels = {pigment: 1.0 for pigment in Pigment}
+        self._source_targets = tuple(0.0 for _ in self.cells)
+
+    @property
+    def pigment_levels(self) -> MappingProxyType[Pigment, float]:
+        """Return a read-only view of group target multipliers in [0, 1]."""
+        return MappingProxyType(self._pigment_levels)
+
+    def set_pigment_level(self, pigment: Pigment, level: float) -> None:
+        """Scale one pigment group's targets without changing current sizes.
+
+        Static targets retain their original source values, so repeated changes
+        never compound. Dynamic targets use the level on their next signal update.
+        A held field uses its frozen sizes as the new static source.
+
+        :param pigment: Group to control, retaining each organ's fixed identity.
+        :param level: Finite multiplier in [0, 1]; 1 preserves the source pattern.
+        :raises ValueError: If pigment or level is invalid; state is unchanged.
+        """
+        if not isinstance(pigment, Pigment):
+            raise ValueError("Pigment must be a member of Pigment")
+        _validate_expansion(level)
+        if level == self._pigment_levels[pigment]:
+            return
+        self._pigment_levels[pigment] = level
+        if self.dynamic is None:
+            for cell, source in zip(self.cells, self._source_targets, strict=True):
+                if cell.pigment is pigment:
+                    cell.set_target(source * level, self.response.response_delay)
+            if self.target_description == "Held":
+                self.target_description = "Pigment mix"
+
+    def reset_pigment_levels(self) -> None:
+        """Restore all group levels to 1, preserving current sizes and display phase."""
+        for pigment in Pigment:
+            self.set_pigment_level(pigment, 1.0)
 
     def start_dynamic(self, display: DynamicDisplay, random_source: Random | None = None) -> None:
         """Start a display from its initial phase without changing current sizes.
@@ -203,6 +240,7 @@ class ChromatophoreField:
         self._dynamic_remainder = 0.0
         for cell in self.cells:
             cell.set_target(cell.expansion, 0.0)
+        self._source_targets = tuple(cell.expansion for cell in self.cells)
         self.target_description = "Held"
 
     def set_targets(self, targets: tuple[float, ...]) -> None:
@@ -219,8 +257,11 @@ class ChromatophoreField:
         for target in targets:
             _validate_expansion(target)
         self.dynamic = None
-        for cell, target in zip(self.cells, targets, strict=True):
-            cell.set_target(target, self.response.response_delay)
+        self._source_targets = tuple(targets)
+        for cell, target in zip(self.cells, self._source_targets, strict=True):
+            cell.set_target(
+                target * self._pigment_levels[cell.pigment], self.response.response_delay
+            )
         self.target_description = "Custom"
 
     def apply_pattern(self, pattern: Pattern, random_source: Random) -> None:
@@ -240,9 +281,7 @@ class ChromatophoreField:
         :raises ValueError: If expansion is invalid; no cells are changed.
         """
         _validate_expansion(expansion)
-        self.dynamic = None
-        for cell in self.cells:
-            cell.set_target(expansion, self.response.response_delay)
+        self.set_targets(tuple(expansion for _ in self.cells))
         self.target_description = f"Uniform {expansion:.0%}"
 
     def randomise(self, random_source: Random) -> None:
@@ -250,9 +289,7 @@ class ChromatophoreField:
 
         :param random_source: Random generator, optionally seeded by the caller.
         """
-        self.dynamic = None
-        for cell in self.cells:
-            cell.set_target(random_source.random(), self.response.response_delay)
+        self.set_targets(tuple(random_source.random() for _ in self.cells))
         self.target_description = "Randomise"
 
     def update(self, elapsed_seconds: float) -> None:
@@ -272,7 +309,7 @@ class ChromatophoreField:
                 targets = self.dynamic.advance(DYNAMIC_STEP, self.response.response_delay)
                 if targets is not None:
                     for cell, target in zip(self.cells, targets, strict=True):
-                        cell.set_target(target, 0.0)
+                        cell.set_target(target * self._pigment_levels[cell.pigment], 0.0)
                 for cell in self.cells:
                     cell.update(DYNAMIC_STEP, self.response)
             return

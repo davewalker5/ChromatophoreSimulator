@@ -9,7 +9,7 @@ os.environ["SDL_VIDEODRIVER"] = "dummy"
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 
 from chromatophore_simulator.dynamics import DynamicController, DynamicDisplay
-from chromatophore_simulator.model import ChromatophoreField, ResponseParameters
+from chromatophore_simulator.model import ChromatophoreField, Pigment, ResponseParameters
 from chromatophore_simulator.patterns import Pattern, generate_targets
 
 
@@ -53,6 +53,10 @@ def reference_results():
                 field.dynamic.speed = 2
             if step == 80:
                 field.response = ResponseParameters(2, 0.5, 2)
+            if step == 110:
+                field.set_pigment_level(Pigment.YELLOW, 0.25)
+                field.set_pigment_level(Pigment.BROWN, 0.5)
+                field.set_pigment_level(Pigment.BLACK, 0)
             if step == 140:
                 field.dynamic.speed = 0.5
             field.update([0.01, 0.04, 0.025, 0.1][step % 4])

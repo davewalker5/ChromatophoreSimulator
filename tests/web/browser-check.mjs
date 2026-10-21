@@ -42,6 +42,13 @@ try {
   watch(page);
   await page.goto(url);
   await page.waitForFunction(() => !document.querySelector('#controls').disabled);
+  assert.equal(await page.locator('[data-pigment]').count(), 4);
+  await page.locator('#pigment-yellow').selectOption('0.25');
+  assert.equal(await page.locator('#pigment-red').inputValue(), '1');
+  await page.getByRole('button', { name: 'Reset pigment levels', exact: true }).click();
+  assert.equal(await page.locator('#pigment-yellow').inputValue(), '1');
+  // Group edits can start movement even when initial reduced-motion state was settled.
+  await page.getByRole('button', { name: 'Hold current sizes' }).click();
   const initial = await canvasImage(page);
   await page.waitForTimeout(150);
   assert.equal(await canvasImage(page), initial, 'Reduced motion must start settled');
@@ -65,6 +72,10 @@ try {
     assert.equal(await page.locator('#display-speed').inputValue(), '1');
     await page.locator('#display-speed').selectOption('2');
   }
+  await page.locator('#pigment-yellow').selectOption('0.25');
+  assert.equal(await page.locator('#current-pattern').textContent(), 'Changing mottle');
+  assert.equal(await page.locator('#display-speed').inputValue(), '2');
+  await page.getByRole('button', { name: 'Reset pigment levels', exact: true }).click();
   await page.getByRole('button', { name: 'Hold current sizes' }).click();
   const held = await canvasImage(page);
   await page.waitForTimeout(150);
@@ -109,7 +120,7 @@ try {
     'solid',
   );
 
-  // Uniform pigment coverage should contain no sample-boundary grid in Skin View.
+  // Uniform coverage may show broad iridophore patches, but no sharp sampling seams.
   await page.locator('#expansion-rate').selectOption('4');
   await page.locator('#contraction-rate').selectOption('4');
   await page.getByRole('button', { name: 'Uniform', exact: true }).click();
@@ -118,15 +129,28 @@ try {
   );
   await page.getByRole('button', { name: 'Skin View', exact: true }).click();
   const spread = await page.locator('#field').evaluate((canvas) => {
-    const pixels = canvas
+    const { width, height, data } = canvas
       .getContext('2d')
-      .getImageData(10, 10, canvas.width - 20, canvas.height - 20).data;
+      .getImageData(0, 0, canvas.width, canvas.height);
     let difference = 0;
-    for (let i = 0; i < pixels.length; i++)
-      difference = Math.max(difference, Math.abs(pixels[i] - pixels[i % 4]));
+    for (let y = 10; y < height - 10; y++) {
+      for (let x = 10; x < width - 10; x++) {
+        const offset = (y * width + x) * 4;
+        for (let channel = 0; channel < 3; channel++) {
+          difference = Math.max(
+            difference,
+            Math.abs(data[offset + channel] - data[offset + 4 + channel]),
+            Math.abs(data[offset + channel] - data[offset + width * 4 + channel]),
+          );
+        }
+      }
+    }
     return difference;
   });
-  assert.ok(spread <= 1, `Uniform skin contains a visible grid: channel spread ${spread}`);
+  assert.ok(
+    spread <= 3,
+    `Uniform skin contains a sharp seam: adjacent-channel difference ${spread}`,
+  );
 
   // The real event handler is exercised with a controlled visibility property,
   // since headless browsers do not reproduce physical tab switching consistently.

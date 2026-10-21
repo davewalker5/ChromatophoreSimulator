@@ -244,6 +244,11 @@ test('static targets, all deterministic signals and delayed state traces match P
     for (let step = 0; step < 200; step++) {
       if (step === 30) field.dynamic.speed = 2;
       if (step === 80) field.response = new ResponseParameters(2, 0.5, 2);
+      if (step === 110) {
+        field.setPigmentLevel(Pigment.YELLOW, 0.25);
+        field.setPigmentLevel(Pigment.BROWN, 0.5);
+        field.setPigmentLevel(Pigment.BLACK, 0);
+      }
       if (step === 140) field.dynamic.speed = 0.5;
       field.update([0.01, 0.04, 0.025, 0.1][step % 4]);
     }
@@ -279,4 +284,70 @@ test('pigment filters are bounded, colour selective and validate backing light',
   for (const invalid of [null, [], [1, 1], [NaN, 0, 0], [Infinity, 0, 0], [-1, 0, 0], [2, 0, 0]]) {
     assert.throws(() => pigmentReflections(invalid), RangeError);
   }
+});
+
+test('pigment levels preserve source targets, delays and independent groups', () => {
+  const field = new ChromatophoreField(3, 5, new ResponseParameters(1, 1, 0.5));
+  const targets = Float64Array.from(field.cells, (_, index) => index / 15);
+  field.setTargets(targets);
+  const originalTargets = [...targets];
+  targets.fill(0);
+  field.update(0.2);
+  const sizes = field.cells.map((cell) => cell.expansion);
+  const redDelay = field.cells[1].delayRemaining;
+  for (const level of [0.25, 0.5, 0, 1]) {
+    field.setPigmentLevel(Pigment.YELLOW, level);
+    assert.deepEqual(
+      field.cells.map((cell) => cell.expansion),
+      sizes,
+    );
+    close(
+      field.cells.map((cell) => cell.targetExpansion),
+      originalTargets.map(
+        (target, index) => target * (field.cells[index].pigment === Pigment.YELLOW ? level : 1),
+      ),
+    );
+    assert.equal(field.cells[1].delayRemaining, redDelay);
+  }
+  field.setPigmentLevel(Pigment.RED, 0.5);
+  field.update(0.2);
+  const delay = field.cells[1].delayRemaining;
+  field.setPigmentLevel(Pigment.RED, 0.5);
+  assert.equal(field.cells[1].delayRemaining, delay);
+  assert.throws(() => {
+    field.pigmentLevels[Pigment.RED] = 0;
+  }, TypeError);
+  for (const level of [-1, 2, NaN, Infinity]) {
+    const before = JSON.stringify(field);
+    assert.throws(() => field.setPigmentLevel(Pigment.RED, level), RangeError);
+    assert.equal(JSON.stringify(field), before);
+  }
+  assert.throws(() => field.setPigmentLevel('Unknown', 0.5), RangeError);
+  field.applyPattern(Pattern.UNIFORM);
+  assert.equal(field.cells[1].targetExpansion, 0.25);
+  field.resetPigmentLevels();
+  assert.ok(field.cells.every((cell) => cell.targetExpansion === 0.5));
+});
+
+test('dynamic pigment changes retain phase and delay, and Hold freezes actual sizes', () => {
+  const field = new ChromatophoreField(2, 2, new ResponseParameters(1, 1, 0.5));
+  field.startDynamic(DynamicDisplay.FLASH);
+  field.update(0.25);
+  const phase = field.dynamic.phaseSeconds;
+  field.setPigmentLevel(Pigment.YELLOW, 0.25);
+  assert.equal(field.dynamic.phaseSeconds, phase);
+  assert.ok(field.cells.every((cell) => cell.targetExpansion === 0));
+  field.update(0.5);
+  assert.equal(field.cells[0].targetExpansion, 0.25);
+  assert.equal(field.cells[1].targetExpansion, 1);
+  const sizes = field.cells.map((cell) => cell.expansion);
+  field.hold();
+  field.update(2);
+  assert.deepEqual(
+    field.cells.map((cell) => cell.expansion),
+    sizes,
+  );
+  field.setPigmentLevel(Pigment.YELLOW, 0.5);
+  assert.equal(field.cells[0].targetExpansion, sizes[0] * 0.5);
+  assert.equal(field.cells[1].targetExpansion, sizes[1]);
 });

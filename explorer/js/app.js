@@ -1,5 +1,5 @@
 /** Page controls and lifecycle; the model itself knows nothing about the DOM. */
-import { ChromatophoreField, ResponseParameters } from './model.js';
+import { ChromatophoreField, ResponseParameters, Pigment } from './model.js';
 import { Pattern } from './patterns.js';
 import { DynamicDisplay } from './dynamics.js';
 import { SeededRandom } from './random.js';
@@ -58,6 +58,27 @@ function initialise() {
     'display',
     DISPLAY_KEYS,
   );
+  const pigmentControls = document.querySelector('#pigment-levels');
+  for (const pigment of Object.values(Pigment)) {
+    const label = document.createElement('label');
+    label.className = 'field';
+    const name = document.createElement('span');
+    name.textContent = pigment;
+    const select = document.createElement('select');
+    select.dataset.pigment = pigment;
+    select.id = `pigment-${pigment.toLowerCase()}`;
+    label.htmlFor = select.id;
+    for (const level of [0, 0.25, 0.5, 0.75, 1]) {
+      select.add(new Option(`${level * 100}%`, String(level)));
+    }
+    label.append(name, select);
+    pigmentControls.append(label);
+    select.addEventListener('change', () => {
+      field.setPigmentLevel(pigment, Number(select.value));
+      selectedCommand = null;
+      refreshControls(`${pigment} target strength ${Number(select.value) * 100} percent.`);
+    });
+  }
   field.applyPattern(Pattern.RANDOM_MOTTLE, source);
   if (reducedMotion.matches) {
     // Start with something meaningful to inspect, but no unsolicited movement.
@@ -80,6 +101,9 @@ function initialise() {
     });
     root.querySelectorAll('[data-view]').forEach((button) => {
       button.setAttribute('aria-pressed', String(button.dataset.view === view.mode));
+    });
+    root.querySelectorAll('[data-pigment]').forEach((select) => {
+      select.value = String(field.pigmentLevels[select.dataset.pigment]);
     });
     speed.disabled = !field.dynamic;
     speed.value = String(field.dynamic?.speed ?? 1);
@@ -114,6 +138,10 @@ function initialise() {
     else if (selectedCommand === 'contract') field.setExpansion(0);
     else if (selectedCommand === 'randomise') field.randomise(source);
     else if (selectedCommand === 'hold') field.hold();
+    else if (selectedCommand === 'reset-pigments') {
+      field.resetPigmentLevels();
+      selectedCommand = null;
+    }
     refreshControls(`${field.targetDescription} selected.`);
   }
 
