@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from importlib.resources import files
-from math import pi
+from math import exp, pi
 from types import MappingProxyType
 
 import pygame
@@ -18,18 +18,40 @@ HEADER_ICON_SIZE = (64, 64)
 HEADER_ICON_POSITION = (24, 10)
 HEADER_TEXT_LEFT = 102
 BACKGROUND = (24, 32, 37)
-SKIN_COLOUR = (236, 220, 190)
-IRIDOPHORE_COLOUR = (90, 185, 195)
-IRIDOPHORE_STRENGTH = 0.45  # Fixed-light structural reflection, beneath pigment.
+SKIN_COLOUR = (235, 232, 220)
+IRIDOPHORE_COLOUR = (126, 179, 205)
+IRIDOPHORE_STRENGTH = 0.28  # Fixed-light structural reflection, beneath pigment.
 
-# A clarity-first palette, rather than a physiological colour model. Keep it in
-# the view so pigment identity and simulation behaviour do not depend on RGB values.
+# Sepia officinalis-inspired palette under neutral daylight (D65 target).
+# Illustrative sRGB values, not measured reflectance. Black represents dark brown.
+IRIDOPHORE_PATCHES = (
+    (0.24, 0.3, 0.15, 0.24),
+    (0.76, 0.36, 0.13, 0.22),
+    (0.48, 0.78, 0.22, 0.12),
+)
+
+
+def iridophore_base(x: float, y: float) -> tuple[int, ...]:
+    """Approximate local reflection at normalised coordinates under fixed daylight.
+
+    Patches are illustrative, not an anatomical map or an angle-dependent model.
+    """
+    patch = max(
+        exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2))
+        for cx, cy, rx, ry in IRIDOPHORE_PATCHES
+    )
+    return tuple(
+        round(backing + IRIDOPHORE_STRENGTH * patch * (reflection - backing))
+        for backing, reflection in zip(SKIN_COLOUR, IRIDOPHORE_COLOUR, strict=True)
+    )
+
+
 PIGMENT_COLOURS = MappingProxyType(
     {
-        Pigment.YELLOW: (213, 158, 24),
-        Pigment.RED: (190, 48, 43),
-        Pigment.BROWN: (104, 49, 31),
-        Pigment.BLACK: (30, 27, 26),
+        Pigment.YELLOW: (190, 145, 52),
+        Pigment.RED: (155, 74, 46),
+        Pigment.BROWN: (85, 56, 40),
+        Pigment.BLACK: (43, 34, 29),
     }
 )
 
@@ -310,13 +332,16 @@ class FieldView:
         samples = pygame.Surface(sample_size)
         maximum_radius = spacing * RADIUS_SPACING_RATIO
         minimum_radius = min(MINIMUM_RADIUS, maximum_radius)
-        base = tuple(
-            round(backing + IRIDOPHORE_STRENGTH * (reflection - backing))
-            for backing, reflection in zip(SKIN_COLOUR, IRIDOPHORE_COLOUR, strict=True)
-        )
 
         for sample_y in range(sample_size[1]):
             for sample_x in range(sample_size[0]):
+                x = (sample_x * SKIN_SAMPLE_SPAN + min(
+                    SKIN_SAMPLE_SPAN, field.columns - sample_x * SKIN_SAMPLE_SPAN
+                ) / 2) / field.columns
+                y = (sample_y * SKIN_SAMPLE_SPAN + min(
+                    SKIN_SAMPLE_SPAN, field.rows - sample_y * SKIN_SAMPLE_SPAN
+                ) / 2) / field.rows
+                base = iridophore_base(x, y)
                 totals = [0.0, 0.0, 0.0]
                 count = 0
 

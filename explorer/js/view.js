@@ -2,21 +2,34 @@
 import { Pigment } from './model.js';
 
 export const LOGICAL_SIZE = 550;
-export const SKIN_COLOUR = Object.freeze([236, 220, 190]);
-// Fixed illumination: a blue-green structural reflector above the pale backing.
-export const IRIDOPHORE_COLOUR = Object.freeze([90, 185, 195]);
-export const IRIDOPHORE_STRENGTH = 0.45;
+export const SKIN_COLOUR = Object.freeze([235, 232, 220]);
+// Common cuttlefish-inspired sRGB palette, with neutral daylight (D65) as the target.
+// Illustrative colours rather than measured reflectance; Black represents dark brown.
+export const IRIDOPHORE_COLOUR = Object.freeze([126, 179, 205]);
+export const IRIDOPHORE_STRENGTH = 0.28;
 
-export function iridophoreBase(strength = IRIDOPHORE_STRENGTH) {
+// Illustrative mantle patches, not an anatomical map. Coordinates are normalised.
+export const IRIDOPHORE_PATCHES = Object.freeze([
+  Object.freeze([0.24, 0.3, 0.15, 0.24]),
+  Object.freeze([0.76, 0.36, 0.13, 0.22]),
+  Object.freeze([0.48, 0.78, 0.22, 0.12]),
+]);
+
+export function iridophoreBase(strength = IRIDOPHORE_STRENGTH, x = 0.5, y = 0.5) {
+  const patch = Math.max(
+    ...IRIDOPHORE_PATCHES.map(([cx, cy, rx, ry]) =>
+      Math.exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)),
+    ),
+  );
   return SKIN_COLOUR.map((base, channel) =>
-    roundEven(base + strength * (IRIDOPHORE_COLOUR[channel] - base)),
+    roundEven(base + strength * patch * (IRIDOPHORE_COLOUR[channel] - base)),
   );
 }
 export const PIGMENT_COLOURS = Object.freeze({
-  [Pigment.YELLOW]: Object.freeze([213, 158, 24]),
-  [Pigment.RED]: Object.freeze([190, 48, 43]),
-  [Pigment.BROWN]: Object.freeze([104, 49, 31]),
-  [Pigment.BLACK]: Object.freeze([30, 27, 26]),
+  [Pigment.YELLOW]: Object.freeze([190, 145, 52]),
+  [Pigment.RED]: Object.freeze([155, 74, 46]),
+  [Pigment.BROWN]: Object.freeze([85, 56, 40]),
+  [Pigment.BLACK]: Object.freeze([43, 34, 29]),
 });
 export const MINIMUM_RADIUS = 0.8;
 export const RADIUS_SPACING_RATIO = 0.45;
@@ -49,9 +62,17 @@ export function skinSamples(field, pixels, iridophoreStrength = IRIDOPHORE_STREN
   const spacing = LOGICAL_SIZE / Math.max(field.rows, field.columns);
   const maximumRadius = spacing * RADIUS_SPACING_RATIO;
   const minimumRadius = Math.min(MINIMUM_RADIUS, maximumRadius);
-  const base = iridophoreBase(iridophoreStrength);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
+      const base = iridophoreBase(
+        iridophoreStrength,
+        (x * SKIN_SAMPLE_SPAN +
+          Math.min(SKIN_SAMPLE_SPAN, field.columns - x * SKIN_SAMPLE_SPAN) / 2) /
+          field.columns,
+        (y * SKIN_SAMPLE_SPAN +
+          Math.min(SKIN_SAMPLE_SPAN, field.rows - y * SKIN_SAMPLE_SPAN) / 2) /
+          field.rows,
+      );
       const totals = [0, 0, 0];
       let count = 0;
       for (

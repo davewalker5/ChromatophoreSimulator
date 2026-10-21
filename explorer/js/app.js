@@ -89,7 +89,7 @@ function initialise() {
       `${isSkin ? 'Skin' : 'Chromatophore'} View: ${field.targetDescription}, 2,500 pigment organs`,
     );
     document.querySelector('#view-description').textContent = isSkin
-      ? 'Pigments cover a blue-green iridophore layer. Retracted cells reveal more reflection; expanded cells hide it.'
+      ? 'Cuttlefish-inspired pigments cover a pale backing with subtle blue-green reflective patches. Expanded cells hide the reflection.'
       : 'Each coloured disc is one pigment organ. Its radius changes as it follows a target size.';
     if (announcement) status.textContent = announcement;
     view.draw(field);

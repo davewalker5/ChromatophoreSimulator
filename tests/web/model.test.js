@@ -162,7 +162,7 @@ test('skin samples preserve state and integrate odd edges without grids', () => 
   field.setExpansion(0.5);
   field.update(2);
   const before = JSON.stringify(field);
-  const { pixels, width, height } = skinSamples(field);
+  const { pixels, width, height } = skinSamples(field, undefined, 0);
   assert.equal(width, 25);
   assert.equal(height, 25);
   for (let offset = 0; offset < pixels.length; offset += 4) {
@@ -181,8 +181,19 @@ test('iridophore reflection is visible through retracted pigment and hidden by e
   const field = new ChromatophoreField(50, 50);
   const reflected = skinSamples(field).pixels;
   const bare = skinSamples(field, undefined, 0).pixels;
-  assert.ok(reflected[0] < bare[0], 'Reflection adds a blue-green cast');
-  assert.ok(reflected[2] > bare[2]);
+  let patches = 0;
+  let pale = 0;
+  for (let offset = 0; offset < reflected.length; offset += 4) {
+    const redDrop = bare[offset] - reflected[offset];
+    const blueDrop = bare[offset + 2] - reflected[offset + 2];
+    if (redDrop > 10) {
+      patches++;
+      assert.ok(redDrop > blueDrop, 'Reflection adds a blue-green cast');
+    }
+    if (redDrop === 0) pale++;
+  }
+  assert.ok(patches > 0, 'Localised reflective patches remain visible');
+  assert.ok(pale > 0, 'Backing remains pale away from patches');
   field.setExpansion(1);
   field.update(4);
   assert.deepEqual(skinSamples(field).pixels, skinSamples(field, undefined, 0).pixels);

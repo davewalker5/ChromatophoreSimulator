@@ -323,12 +323,16 @@ def test_skin_contrast_strengthens_patches_without_changing_model(
 
 
 @pytest.mark.parametrize("expansion", [0.0, 0.25, 0.5, 0.75, 1.0])
-def test_uniform_skin_has_no_sampling_grid(view: FieldView, expansion: float) -> None:
+def test_uniform_skin_has_no_sampling_grid(
+    view: FieldView, expansion: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Equal pigment tiles must produce a flat skin colour without raster aliasing.
 
     :param view: Headless renderer.
     :param expansion: Uniform expansion, including partially expanded discs.
     """
+    # Disable intended structural patches to isolate unwanted sampling artefacts.
+    monkeypatch.setattr("chromatophore_simulator.view.IRIDOPHORE_STRENGTH", 0.0)
     field = ChromatophoreField()
     field.set_expansion(expansion)
     field.update(4.0)
