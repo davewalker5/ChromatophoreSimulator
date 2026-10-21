@@ -19,6 +19,7 @@ HEADER_ICON_POSITION = (24, 10)
 HEADER_TEXT_LEFT = 102
 BACKGROUND = (24, 32, 37)
 SKIN_COLOUR = (236, 220, 190)
+
 # A clarity-first palette, rather than a physiological colour model. Keep it in
 # the view so pigment identity and simulation behaviour do not depend on RGB values.
 PIGMENT_COLOURS = MappingProxyType(
@@ -29,13 +30,16 @@ PIGMENT_COLOURS = MappingProxyType(
         Pigment.BLACK: (30, 27, 26),
     }
 )
+
 TEXT_COLOUR = (239, 236, 226)
 BUTTON_COLOUR = (53, 72, 80)
 HOVER_COLOUR = (72, 99, 107)
 MINIMUM_RADIUS = 0.8
 RADIUS_SPACING_RATIO = 0.45
-SKIN_SAMPLE_SPAN = 2  # Integrate roughly one 2 × 2 pigment tile per low-resolution sample.
+SKIN_SAMPLE_SPAN = 4  # Integrate roughly one 2 × 2 pigment tile per low-resolution sample.
 SKIN_CONTRAST = 2.0  # Amplify pigment contrast against bare skin; 1.0 restores raw averaging.
+SKIN_SHARPNESS = 1.2  # Unsharp mask strength on the integrated pigment image.
+
 PATTERN_SHORTCUTS = (
     (Pattern.UNIFORM, "U"),
     (Pattern.CHECKERBOARD, "B"),
@@ -355,6 +359,29 @@ class FieldView:
                     for channel, base in zip(colour[:3], SKIN_COLOUR, strict=True)
                 )
                 samples.set_at((x, y), enhanced)
+
+        # Sharpen the integrated image rather than the discs. A small unsharp mask
+        # strengthens pattern edges while leaving uniform regions unchanged.
+        source = samples.copy()
+        width, height = sample_size
+        for y in range(height):
+            for x in range(width):
+                colour = source.get_at((x, y))
+                totals = [0, 0, 0]
+                for dy in range(-1, 2):
+                    for dx in range(-1, 2):
+                        neighbour = source.get_at(
+                            (max(0, min(width - 1, x + dx)), max(0, min(height - 1, y + dy)))
+                        )
+                        for channel in range(3):
+                            totals[channel] += neighbour[channel]
+                samples.set_at(
+                    (x, y),
+                    tuple(
+                        max(0, min(255, round(value + SKIN_SHARPNESS * (value - total / 9))))
+                        for value, total in zip(colour[:3], totals, strict=True)
+                    ),
+                )
 
         # Smooth enlargement blends sample boundaries into a continuous surface. This
         # is a visual approximation of viewing distance, not a biological optical model.

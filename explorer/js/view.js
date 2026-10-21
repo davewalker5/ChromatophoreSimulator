@@ -13,6 +13,7 @@ export const MINIMUM_RADIUS = 0.8;
 export const RADIUS_SPACING_RATIO = 0.45;
 export const SKIN_SAMPLE_SPAN = 2;
 export const SKIN_CONTRAST = 2;
+export const SKIN_SHARPNESS = 1.2;
 export const ViewMode = Object.freeze({ CHROMATOPHORES: 'Chromatophores', SKIN: 'Skin' });
 
 /**
@@ -82,6 +83,28 @@ export function skinSamples(field, pixels) {
     }
   }
   return { width, height, pixels: destination };
+}
+
+/** Strengthen integrated pattern edges with a clamped 3 × 3 unsharp mask. */
+export function sharpenSkin(pixels, width, height) {
+  const source = pixels.slice();
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      for (let channel = 0; channel < 3; channel++) {
+        let blurred = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const sx = Math.max(0, Math.min(width - 1, x + dx));
+            const sy = Math.max(0, Math.min(height - 1, y + dy));
+            blurred += source[(sy * width + sx) * 4 + channel];
+          }
+        }
+        const offset = (y * width + x) * 4 + channel;
+        pixels[offset] = roundEven(source[offset] + SKIN_SHARPNESS * (source[offset] - blurred / 9));
+      }
+    }
+  }
+  return pixels;
 }
 
 export class FieldView {
@@ -160,6 +183,8 @@ export class FieldView {
       this.sampleImage = this.sampleContext.createImageData(width, height);
     }
     skinSamples(field, this.sampleImage.data);
+    // Sharpen after pigment integration, before interpolation, so no disc grid returns.
+    sharpenSkin(this.sampleImage.data, width, height);
     this.sampleContext.putImageData(this.sampleImage, 0, 0);
     this.context.imageSmoothingEnabled = true;
     this.context.imageSmoothingQuality = 'high';
