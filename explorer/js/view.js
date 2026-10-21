@@ -31,6 +31,64 @@ export const PIGMENT_COLOURS = Object.freeze({
   [Pigment.BROWN]: Object.freeze([85, 56, 40]),
   [Pigment.BLACK]: Object.freeze([43, 34, 29]),
 });
+// Illustrative effective round-trip transmission of linear RGB light, not spectra.
+export const PIGMENT_TRANSMISSION = Object.freeze({
+  [Pigment.YELLOW]: Object.freeze([0.55, 0.35, 0.04]),
+  [Pigment.RED]: Object.freeze([0.35, 0.05, 0.02]),
+  [Pigment.BROWN]: Object.freeze([0.07, 0.04, 0.02]),
+  [Pigment.BLACK]: Object.freeze([0.015, 0.01, 0.008]),
+});
+const SRGB_CHANNEL_MAXIMUM = 255;
+const SRGB_LINEAR_THRESHOLD = 0.04045;
+const LINEAR_SRGB_THRESHOLD = 0.0031308;
+const SRGB_LINEAR_SCALE = 12.92;
+const SRGB_OFFSET = 0.055;
+const SRGB_SCALE = 1.055;
+const SRGB_EXPONENT = 2.4;
+
+/** Decode an internal 0–255 sRGB channel to linear intensity in [0, 1]. */
+function srgbToLinear(channel) {
+  const value = channel / SRGB_CHANNEL_MAXIMUM;
+  return value <= SRGB_LINEAR_THRESHOLD
+    ? value / SRGB_LINEAR_SCALE
+    : ((value + SRGB_OFFSET) / SRGB_SCALE) ** SRGB_EXPONENT;
+}
+
+/** Encode internal linear light intensity to a clamped 0–255 sRGB channel. */
+function linearToSrgb(intensity) {
+  const value = Math.max(0, Math.min(1, intensity));
+  const encoded =
+    value <= LINEAR_SRGB_THRESHOLD
+      ? value * SRGB_LINEAR_SCALE
+      : SRGB_SCALE * value ** (1 / SRGB_EXPONENT) - SRGB_OFFSET;
+  return roundEven(encoded * SRGB_CHANNEL_MAXIMUM);
+}
+
+/**
+ * Calculate covered-area reflection using a bounded mixture of pigment and backing light.
+ * @param {number[]} backing - Three linear RGB intensities in [0, 1].
+ * @returns {Object<string, number[]>} Linear RGB reflection for each pigment.
+ * @throws {RangeError} If backing is not three finite intensities in [0, 1].
+ */
+export function pigmentReflections(backing) {
+  if (
+    !Array.isArray(backing) ||
+    backing.length !== 3 ||
+    !backing.every((value) => Number.isFinite(value) && value >= 0 && value <= 1)
+  ) {
+    throw new RangeError('Backing must contain three linear RGB intensities in [0, 1]');
+  }
+  return Object.fromEntries(
+    Object.entries(PIGMENT_COLOURS).map(([pigment, colour]) => [
+      pigment,
+      colour.map((channel, index) => {
+        const transmission = PIGMENT_TRANSMISSION[pigment][index];
+        return srgbToLinear(channel) * (1 - transmission) + backing[index] * transmission;
+      }),
+    ]),
+  );
+}
+
 export const MINIMUM_RADIUS = 0.8;
 export const RADIUS_SPACING_RATIO = 0.45;
 export const SKIN_SAMPLE_SPAN = 2;
@@ -69,10 +127,10 @@ export function skinSamples(field, pixels, iridophoreStrength = IRIDOPHORE_STREN
         (x * SKIN_SAMPLE_SPAN +
           Math.min(SKIN_SAMPLE_SPAN, field.columns - x * SKIN_SAMPLE_SPAN) / 2) /
           field.columns,
-        (y * SKIN_SAMPLE_SPAN +
-          Math.min(SKIN_SAMPLE_SPAN, field.rows - y * SKIN_SAMPLE_SPAN) / 2) /
+        (y * SKIN_SAMPLE_SPAN + Math.min(SKIN_SAMPLE_SPAN, field.rows - y * SKIN_SAMPLE_SPAN) / 2) /
           field.rows,
-      );
+      ).map(srgbToLinear);
+      const reflections = pigmentReflections(base);
       const totals = [0, 0, 0];
       let count = 0;
       for (
@@ -89,10 +147,10 @@ export function skinSamples(field, pixels, iridophoreStrength = IRIDOPHORE_STREN
           const radius = minimumRadius + cell.expansion * (maximumRadius - minimumRadius);
           // The circle covers πr² of its spacing² slot. Analytical coverage avoids
           // false grids caused by raster sampling alternately hitting discs and gaps.
-          // Contrast compensates for the diagnostic gaps; clamp occlusion so
-          // expanded pigment hides rather than subtracts the reflective layer.
+          // Coverage compensation closes diagnostic gaps without exceeding the slot.
+          // Covered pigment filters backing light instead of completely hiding it.
           const coverage = Math.min(1, SKIN_CONTRAST * Math.PI * (radius / spacing) ** 2);
-          const pigment = PIGMENT_COLOURS[cell.pigment];
+          const pigment = reflections[cell.pigment];
           for (let channel = 0; channel < 3; channel++) {
             totals[channel] += base[channel] * (1 - coverage) + pigment[channel] * coverage;
           }
@@ -101,7 +159,7 @@ export function skinSamples(field, pixels, iridophoreStrength = IRIDOPHORE_STREN
       }
       const offset = (y * width + x) * 4;
       for (let channel = 0; channel < 3; channel++) {
-        destination[offset + channel] = roundEven(totals[channel] / count);
+        destination[offset + channel] = linearToSrgb(totals[channel] / count);
       }
       destination[offset + 3] = 255;
     }
@@ -124,7 +182,9 @@ export function sharpenSkin(pixels, width, height) {
           }
         }
         const offset = (y * width + x) * 4 + channel;
-        pixels[offset] = roundEven(source[offset] + SKIN_SHARPNESS * (source[offset] - blurred / 9));
+        pixels[offset] = roundEven(
+          source[offset] + SKIN_SHARPNESS * (source[offset] - blurred / 9),
+        );
       }
     }
   }

@@ -11,7 +11,13 @@ import {
 import { Pattern, generateTargets } from '../../explorer/js/patterns.js';
 import { DynamicController, DynamicDisplay } from '../../explorer/js/dynamics.js';
 import { SeededRandom } from '../../explorer/js/random.js';
-import { roundEven, skinSamples, sharpenSkin, SKIN_COLOUR } from '../../explorer/js/view.js';
+import {
+  roundEven,
+  skinSamples,
+  sharpenSkin,
+  pigmentReflections,
+  SKIN_COLOUR,
+} from '../../explorer/js/view.js';
 
 test('skin sharpening preserves flat colours and strengthens edges without changing alpha', () => {
   const flat = new Uint8ClampedArray([120, 100, 80, 255]);
@@ -177,7 +183,7 @@ test('skin samples preserve state and integrate odd edges without grids', () => 
   assert.ok(pixels[0] < SKIN_COLOUR[0]);
 });
 
-test('iridophore reflection is visible through retracted pigment and hidden by expansion', () => {
+test('expanded pigment attenuates but preserves filtered iridophore reflection', () => {
   const field = new ChromatophoreField(50, 50);
   const reflected = skinSamples(field).pixels;
   const bare = skinSamples(field, undefined, 0).pixels;
@@ -194,9 +200,16 @@ test('iridophore reflection is visible through retracted pigment and hidden by e
   }
   assert.ok(patches > 0, 'Localised reflective patches remain visible');
   assert.ok(pale > 0, 'Backing remains pale away from patches');
+  const retractedDifference = Math.max(...bare.map((value, index) => value - reflected[index]));
   field.setExpansion(1);
   field.update(4);
-  assert.deepEqual(skinSamples(field).pixels, skinSamples(field, undefined, 0).pixels);
+  const expanded = skinSamples(field).pixels;
+  const expandedBare = skinSamples(field, undefined, 0).pixels;
+  const expandedDifference = Math.max(
+    ...expandedBare.map((value, index) => value - expanded[index]),
+  );
+  assert.ok(expandedDifference > 0, 'Reflection survives beneath expanded pigment');
+  assert.ok(expandedDifference < retractedDifference, 'Expanded pigment attenuates reflection');
 });
 
 test('static targets, all deterministic signals and delayed state traces match Python', () => {
@@ -243,5 +256,27 @@ test('static targets, all deterministic signals and delayed state traces match P
       trace.targets,
     );
     close([field.dynamic.phaseSeconds], [trace.phase]);
+  }
+});
+
+test('pigment filters are bounded, colour selective and validate backing light', () => {
+  const dark = pigmentReflections([0, 0, 0]);
+  const backing = [1, 1, 1];
+  const bright = pigmentReflections(backing);
+  assert.deepEqual(backing, [1, 1, 1]);
+  const difference = (pigment) =>
+    bright[pigment].map((value, channel) => value - dark[pigment][channel]);
+  for (const pigment of Object.values(Pigment)) {
+    assert.ok(bright[pigment].every((value) => value >= 0 && value <= 1));
+    assert.ok(dark[pigment].every((value) => value >= 0 && value <= 1));
+  }
+  const yellow = difference(Pigment.YELLOW);
+  const red = difference(Pigment.RED);
+  assert.ok(yellow[0] > yellow[1] && yellow[1] > yellow[2] && yellow[2] > 0);
+  assert.ok(red[0] > red[1] && red[1] > red[2] && red[2] > 0);
+  assert.ok(yellow[1] > red[1]);
+  assert.ok(Math.max(...difference(Pigment.BLACK)) < Math.min(...difference(Pigment.BROWN)));
+  for (const invalid of [null, [], [1, 1], [NaN, 0, 0], [Infinity, 0, 0], [-1, 0, 0], [2, 0, 0]]) {
+    assert.throws(() => pigmentReflections(invalid), RangeError);
   }
 });

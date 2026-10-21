@@ -55,6 +55,72 @@ PIGMENT_COLOURS = MappingProxyType(
     }
 )
 
+# Effective round-trip transmission per linear RGB channel, in [0, 1]. These
+# illustrative coefficients include travel into and back out of the pigment.
+# The untransmitted fraction uses the pigment's existing reflected colour.
+PIGMENT_TRANSMISSION = MappingProxyType(
+    {
+        Pigment.YELLOW: (0.55, 0.35, 0.04),
+        Pigment.RED: (0.35, 0.05, 0.02),
+        Pigment.BROWN: (0.07, 0.04, 0.02),
+        Pigment.BLACK: (0.015, 0.01, 0.008),
+    }
+)
+SRGB_CHANNEL_MAXIMUM = 255
+SRGB_LINEAR_THRESHOLD = 0.04045
+LINEAR_SRGB_THRESHOLD = 0.0031308
+SRGB_LINEAR_SCALE = 12.92
+SRGB_OFFSET = 0.055
+SRGB_SCALE = 1.055
+SRGB_EXPONENT = 2.4
+
+
+def _srgb_to_linear(channel: int) -> float:
+    """Decode one sRGB channel to relative light intensity.
+
+    :param channel: Display channel in the inclusive range 0 to 255.
+    :return: Linear intensity in the inclusive range 0 to 1.
+    """
+    value = channel / SRGB_CHANNEL_MAXIMUM
+    if value <= SRGB_LINEAR_THRESHOLD:
+        return value / SRGB_LINEAR_SCALE
+    return ((value + SRGB_OFFSET) / SRGB_SCALE) ** SRGB_EXPONENT
+
+
+def _linear_to_srgb(value: float) -> int:
+    """Encode linear light intensity as a clamped display channel.
+
+    :param value: Relative linear light intensity, normally between 0 and 1.
+    :return: Integer sRGB channel in the inclusive range 0 to 255.
+    """
+    value = max(0.0, min(1.0, value))
+    if value <= LINEAR_SRGB_THRESHOLD:
+        encoded = value * SRGB_LINEAR_SCALE
+    else:
+        encoded = SRGB_SCALE * value ** (1 / SRGB_EXPONENT) - SRGB_OFFSET
+    return round(encoded * SRGB_CHANNEL_MAXIMUM)
+
+
+def _pigment_reflections(backing: tuple[float, ...]) -> dict[Pigment, tuple[float, ...]]:
+    """Filter backing light through each pigment without changing model state.
+
+    The convex mixture bounds outgoing energy by the supplied backing and pigment
+    reflection. It approximates RGB filtering, not a spectral scattering model.
+
+    :param backing: Three linear RGB intensities, each between 0 and 1.
+    :return: Linear RGB reflection for the pigment-covered part of each cell.
+    """
+    return {
+        pigment: tuple(
+            _srgb_to_linear(colour) * (1 - transmission) + light * transmission
+            for colour, light, transmission in zip(
+                PIGMENT_COLOURS[pigment], backing, PIGMENT_TRANSMISSION[pigment], strict=True
+            )
+        )
+        for pigment in Pigment
+    }
+
+
 TEXT_COLOUR = (239, 236, 226)
 BUTTON_COLOUR = (53, 72, 80)
 HOVER_COLOUR = (72, 99, 107)
@@ -335,13 +401,16 @@ class FieldView:
 
         for sample_y in range(sample_size[1]):
             for sample_x in range(sample_size[0]):
-                x = (sample_x * SKIN_SAMPLE_SPAN + min(
-                    SKIN_SAMPLE_SPAN, field.columns - sample_x * SKIN_SAMPLE_SPAN
-                ) / 2) / field.columns
-                y = (sample_y * SKIN_SAMPLE_SPAN + min(
-                    SKIN_SAMPLE_SPAN, field.rows - sample_y * SKIN_SAMPLE_SPAN
-                ) / 2) / field.rows
-                base = iridophore_base(x, y)
+                x = (
+                    sample_x * SKIN_SAMPLE_SPAN
+                    + min(SKIN_SAMPLE_SPAN, field.columns - sample_x * SKIN_SAMPLE_SPAN) / 2
+                ) / field.columns
+                y = (
+                    sample_y * SKIN_SAMPLE_SPAN
+                    + min(SKIN_SAMPLE_SPAN, field.rows - sample_y * SKIN_SAMPLE_SPAN) / 2
+                ) / field.rows
+                base = tuple(_srgb_to_linear(channel) for channel in iridophore_base(x, y))
+                reflections = _pigment_reflections(base)
                 totals = [0.0, 0.0, 0.0]
                 count = 0
 
@@ -362,9 +431,10 @@ class FieldView:
                         # Each cell occupies a square slot of side length spacing but its pigment is
                         # a circle - calculate how much of the square is covered
                         coverage = min(1.0, SKIN_CONTRAST * pi * (radius / spacing) ** 2)
-                        pigment = PIGMENT_COLOURS[cell.pigment]
+                        pigment = reflections[cell.pigment]
 
-                        # Expanded pigment occludes the underlying structural reflector.
+                        # Uncovered slots reflect the backing directly; covered slots
+                        # combine pigment reflection with colour-filtered backing light.
                         for channel in range(3):
                             totals[channel] += (
                                 base[channel] * (1 - coverage) + pigment[channel] * coverage
@@ -373,7 +443,7 @@ class FieldView:
 
                 # Average only actual cells, including partial tiles at odd-sized edges.
                 samples.set_at(
-                    (sample_x, sample_y), tuple(round(total / count) for total in totals)
+                    (sample_x, sample_y), tuple(_linear_to_srgb(total / count) for total in totals)
                 )
 
         # Sharpen the integrated image rather than the discs. A small unsharp mask
