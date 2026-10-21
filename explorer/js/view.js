@@ -1,4 +1,5 @@
 /** Canvas rendering reads state only; drawing never changes targets or time. */
+import { circleRectangleArea } from './coverage.js';
 import { Pigment } from './model.js';
 
 export const LOGICAL_SIZE = 550;
@@ -90,9 +91,9 @@ export function pigmentReflections(backing) {
 }
 
 export const MINIMUM_RADIUS = 0.8;
-export const RADIUS_SPACING_RATIO = 0.45;
 export const SKIN_SAMPLE_SPAN = 2;
 export const SKIN_CONTRAST = 2;
+export const SKIN_REFERENCE_RADIUS_RATIO = 0.45;
 export const SKIN_SHARPNESS = 2.0;
 export const ViewMode = Object.freeze({ CHROMATOPHORES: 'Chromatophores', SKIN: 'Skin' });
 
@@ -108,6 +109,24 @@ export function roundEven(value) {
 }
 
 /**
+ * Calibrate maximum pigment area against the former regular layout.
+ * The fixed, global gain preserves local variation without tracking animation brightness.
+ * @param {import('./model.js').ChromatophoreField} field - Non-empty, valid organ field.
+ * @returns {number} Dimensionless integrated-coverage multiplier.
+ * @throws {RangeError} If geometry is empty or contains invalid maximum radii.
+ */
+export function skinCoverageGain(field) {
+  if (
+    !field.geometry.length ||
+    !field.geometry.every((organ) => Number.isFinite(organ.radiusRatio) && organ.radiusRatio > 0)
+  ) {
+    throw new RangeError('Skin calibration requires positive, finite organ radii');
+  }
+  const maximumArea = field.geometry.reduce((sum, organ) => sum + organ.radiusRatio ** 2, 0);
+  return (field.geometry.length * SKIN_REFERENCE_RADIUS_RATIO ** 2) / maximumArea;
+}
+
+/**
  * Calculate area-weighted skin samples without reducing a raster of circles.
  * @param {import('./model.js').ChromatophoreField} field - State to display.
  * @param {Uint8ClampedArray} [pixels] - Optional reusable RGBA destination.
@@ -118,48 +137,55 @@ export function skinSamples(field, pixels, iridophoreStrength = IRIDOPHORE_STREN
   const height = Math.ceil(field.rows / SKIN_SAMPLE_SPAN);
   const destination = pixels ?? new Uint8ClampedArray(width * height * 4);
   const spacing = LOGICAL_SIZE / Math.max(field.rows, field.columns);
-  const maximumRadius = spacing * RADIUS_SPACING_RATIO;
-  const minimumRadius = Math.min(MINIMUM_RADIUS, maximumRadius);
+  const coverageGain = skinCoverageGain(field);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
+      const left = x * SKIN_SAMPLE_SPAN;
+      const top = y * SKIN_SAMPLE_SPAN;
+      const right = Math.min(left + SKIN_SAMPLE_SPAN, field.columns);
+      const bottom = Math.min(top + SKIN_SAMPLE_SPAN, field.rows);
       const base = iridophoreBase(
         iridophoreStrength,
-        (x * SKIN_SAMPLE_SPAN +
-          Math.min(SKIN_SAMPLE_SPAN, field.columns - x * SKIN_SAMPLE_SPAN) / 2) /
-          field.columns,
-        (y * SKIN_SAMPLE_SPAN + Math.min(SKIN_SAMPLE_SPAN, field.rows - y * SKIN_SAMPLE_SPAN) / 2) /
-          field.rows,
+        (left + right) / (2 * field.columns),
+        (top + bottom) / (2 * field.rows),
       ).map(srgbToLinear);
       const reflections = pigmentReflections(base);
-      const totals = [0, 0, 0];
-      let count = 0;
-      for (
-        let row = y * SKIN_SAMPLE_SPAN;
-        row < Math.min((y + 1) * SKIN_SAMPLE_SPAN, field.rows);
-        row++
-      ) {
+      const areas = Object.fromEntries(Object.values(Pigment).map((pigment) => [pigment, 0]));
+      // Include the adjacent logical slots: displaced discs can cross sample boundaries.
+      for (let row = Math.max(0, top - 1); row < Math.min(field.rows, bottom + 1); row++) {
         for (
-          let column = x * SKIN_SAMPLE_SPAN;
-          column < Math.min((x + 1) * SKIN_SAMPLE_SPAN, field.columns);
+          let column = Math.max(0, left - 1);
+          column < Math.min(field.columns, right + 1);
           column++
         ) {
-          const cell = field.cells[row * field.columns + column];
-          const radius = minimumRadius + cell.expansion * (maximumRadius - minimumRadius);
-          // The circle covers πr² of its spacing² slot. Analytical coverage avoids
-          // false grids caused by raster sampling alternately hitting discs and gaps.
-          // Coverage compensation closes diagnostic gaps without exceeding the slot.
-          // Covered pigment filters backing light instead of completely hiding it.
-          const coverage = Math.min(1, SKIN_CONTRAST * Math.PI * (radius / spacing) ** 2);
-          const pigment = reflections[cell.pigment];
-          for (let channel = 0; channel < 3; channel++) {
-            totals[channel] += base[channel] * (1 - coverage) + pigment[channel] * coverage;
-          }
-          count++;
+          const index = row * field.columns + column;
+          const cell = field.cells[index];
+          const organ = field.geometry[index];
+          const minimumRadius = Math.min(MINIMUM_RADIUS / spacing, organ.radiusRatio);
+          const radius = minimumRadius + cell.expansion * (organ.radiusRatio - minimumRadius);
+          areas[cell.pigment] += circleRectangleArea(organ.x, organ.y, radius, [
+            left,
+            top,
+            right,
+            bottom,
+          ]);
         }
       }
+      const weights = Object.fromEntries(
+        Object.entries(areas).map(([pigment, area]) => [
+          pigment,
+          (SKIN_CONTRAST * coverageGain * area) / ((right - left) * (bottom - top)),
+        ]),
+      );
+      const totalWeight = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+      const normalisation = Math.max(1, totalWeight);
       const offset = (y * width + x) * 4;
       for (let channel = 0; channel < 3; channel++) {
-        destination[offset + channel] = linearToSrgb(totals[channel] / count);
+        let light = base[channel] * Math.max(0, 1 - totalWeight);
+        for (const pigment of Object.values(Pigment)) {
+          light += (reflections[pigment][channel] * weights[pigment]) / normalisation;
+        }
+        destination[offset + channel] = linearToSrgb(light);
       }
       destination[offset + 3] = 255;
     }
@@ -231,8 +257,6 @@ export class FieldView {
       this.drawSkin(field, left, top, spacing);
       return;
     }
-    const maximum = spacing * RADIUS_SPACING_RATIO;
-    const minimum = Math.min(MINIMUM_RADIUS, maximum);
     // Batch by pigment to avoid thousands of fill calls. Discs do not overlap,
     // so batching preserves the appearance without introducing layer ordering.
     for (const [pigment, colour] of Object.entries(PIGMENT_COLOURS)) {
@@ -241,8 +265,11 @@ export class FieldView {
       for (let index = 0; index < field.cells.length; index++) {
         const cell = field.cells[index];
         if (cell.pigment !== pigment) continue;
-        const x = left + ((index % field.columns) + 0.5) * spacing;
-        const y = top + (Math.floor(index / field.columns) + 0.5) * spacing;
+        const organ = field.geometry[index];
+        const x = left + organ.x * spacing;
+        const y = top + organ.y * spacing;
+        const maximum = organ.radiusRatio * spacing;
+        const minimum = Math.min(MINIMUM_RADIUS, maximum);
         const radius = minimum + cell.expansion * (maximum - minimum);
         context.moveTo(x + radius, y);
         context.arc(x, y, radius, 0, Math.PI * 2);

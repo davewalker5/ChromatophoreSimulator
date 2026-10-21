@@ -10,12 +10,25 @@ os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 
 from chromatophore_simulator.dynamics import DynamicController, DynamicDisplay
 from chromatophore_simulator.model import ChromatophoreField, Pigment, ResponseParameters
+from chromatophore_simulator.morphology import generate_layout
 from chromatophore_simulator.patterns import Pattern, generate_targets
 
 
 def reference_results():
     """Return geometry, signals and state traces for comparison with JavaScript."""
-    results = {"patterns": [], "signals": [], "traces": [], "skin": []}
+    results = {"patterns": [], "signals": [], "traces": [], "skin": [], "layouts": []}
+    for rows, columns, seed in [(1, 1, 0), (3, 5, 314159), (7, 1, 2**32 - 1), (50, 50, 314159)]:
+        results["layouts"].append(
+            {
+                "rows": rows,
+                "columns": columns,
+                "seed": seed,
+                "geometry": [
+                    [organ.x, organ.y, organ.radius_ratio, organ.pigment_index]
+                    for organ in generate_layout(rows, columns, seed)
+                ],
+            }
+        )
     for rows, columns in [(1, 1), (5, 7), (50, 50)]:
         for pattern in Pattern:
             if pattern is not Pattern.RANDOM_MOTTLE:

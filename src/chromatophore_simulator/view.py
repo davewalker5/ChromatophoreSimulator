@@ -3,11 +3,12 @@
 from dataclasses import dataclass
 from enum import Enum
 from importlib.resources import files
-from math import exp, pi
+from math import exp
 from types import MappingProxyType
 
 import pygame
 
+from chromatophore_simulator.coverage import circle_rectangle_area
 from chromatophore_simulator.dynamics import DynamicDisplay
 from chromatophore_simulator.model import ChromatophoreField, Pigment
 from chromatophore_simulator.patterns import Pattern
@@ -125,9 +126,9 @@ TEXT_COLOUR = (239, 236, 226)
 BUTTON_COLOUR = (53, 72, 80)
 HOVER_COLOUR = (72, 99, 107)
 MINIMUM_RADIUS = 0.8
-RADIUS_SPACING_RATIO = 0.45
-SKIN_SAMPLE_SPAN = 4  # Integrate roughly one 2 × 2 pigment tile per low-resolution sample.
-SKIN_CONTRAST = 2.0  # Compensate pigment coverage for diagnostic gaps; 1.0 uses raw area.
+SKIN_SAMPLE_SPAN = 4  # Integrate four logical spacings per sample, including partial edges.
+SKIN_CONTRAST = 2.0  # Display coverage boost, applied after fixed layout calibration.
+SKIN_REFERENCE_RADIUS_RATIO = 0.45  # Preserve the pre-morphology layout's pigment density.
 SKIN_SHARPNESS = 2.0  # Unsharp mask strength on the integrated pigment image.
 
 PATTERN_SHORTCUTS = (
@@ -149,6 +150,21 @@ DYNAMIC_SHORTCUTS = (
     (DynamicDisplay.LOCAL_EXCITATION, "L"),
     (DynamicDisplay.CHANGING_MOTTLE, "T"),
 )
+
+
+def _skin_coverage_gain(field: ChromatophoreField) -> float:
+    """Calibrate fixed morphology against the former regular layout's maximum area.
+
+    Smaller organs need greater coverage compensation in the integrated view.
+    Using maximum rather than current radii avoids brightness pumping as organs
+    move. A single global factor preserves local size and pigment differences.
+    The circle-area factor pi cancels from the ratio of the two area totals.
+
+    :param field: Non-empty field with factory-generated positive maximum radii.
+    :return: Dimensionless multiplier for integrated pigment coverage.
+    """
+    maximum_area = sum(organ.radius_ratio**2 for organ in field.geometry)
+    return len(field.geometry) * SKIN_REFERENCE_RADIUS_RATIO**2 / maximum_area
 
 
 class DynamicAction(Enum):
@@ -298,19 +314,16 @@ class FieldView:
         # entire grid fits, even when the field and the skin patch have different shapes.
         spacing = min(rectangle.width / field.columns, rectangle.height / field.rows)
 
-        # Keep expanded neighbours separated. Contracted cells retain a small dot,
-        # capped at the maximum radius so very dense grids cannot invert the size range.
-        maximum_radius = spacing * RADIUS_SPACING_RATIO
-        minimum_radius = min(MINIMUM_RADIUS, maximum_radius)
+        # Fixed morphology bounds each organ's radius to avoid neighbour overlap.
+        # Contracted organs retain a small diagnostic dot, capped by that radius.
 
         # Centre a square-spaced grid within the available rectangular skin patch.
         left = rectangle.centerx - field.columns * spacing / 2
         top = rectangle.centery - field.rows * spacing / 2
-        for index, cell in enumerate(field.cells):
-            # Cells are stored row by row. The half-spacing offset places each disc
-            # in the middle of its grid slot rather than on the slot's upper-left edge.
-            row, column = divmod(index, field.columns)
-            centre = (left + (column + 0.5) * spacing, top + (row + 0.5) * spacing)
+        for cell, organ in zip(field.cells, field.geometry, strict=True):
+            centre = (left + organ.x * spacing, top + organ.y * spacing)
+            maximum_radius = organ.radius_ratio * spacing
+            minimum_radius = min(MINIMUM_RADIUS, maximum_radius)
 
             # Map expansion [0, 1] linearly onto the visible radius range. This makes
             # radius, not area, proportional to expansion: area grows with radius squared.
@@ -419,7 +432,7 @@ class FieldView:
 
         :param rectangle: Occupied grid bounds in the display surface, in pixels.
         :param field: Current cell states, read without mutation.
-        :param spacing: Distance between cell centres in the detailed view, in pixels.
+        :param spacing: Pixels per logical target spacing in the detailed view.
         """
         sample_size = (
             max(1, (field.columns + SKIN_SAMPLE_SPAN - 1) // SKIN_SAMPLE_SPAN),
@@ -427,55 +440,43 @@ class FieldView:
         )
 
         samples = pygame.Surface(sample_size)
-        maximum_radius = spacing * RADIUS_SPACING_RATIO
-        minimum_radius = min(MINIMUM_RADIUS, maximum_radius)
+        coverage_gain = _skin_coverage_gain(field)
 
         for sample_y in range(sample_size[1]):
             for sample_x in range(sample_size[0]):
-                x = (
-                    sample_x * SKIN_SAMPLE_SPAN
-                    + min(SKIN_SAMPLE_SPAN, field.columns - sample_x * SKIN_SAMPLE_SPAN) / 2
-                ) / field.columns
-                y = (
-                    sample_y * SKIN_SAMPLE_SPAN
-                    + min(SKIN_SAMPLE_SPAN, field.rows - sample_y * SKIN_SAMPLE_SPAN) / 2
-                ) / field.rows
-                base = tuple(_srgb_to_linear(channel) for channel in iridophore_base(x, y))
-                reflections = _pigment_reflections(base)
-                totals = [0.0, 0.0, 0.0]
-                count = 0
-
-                # Integrate complete cell slots rather than shrinking a raster image.
-                # Raster resampling can alternately capture discs and pale gaps, creating
-                # a false grid. Exact circle area is independent of pixel alignment.
-                for row in range(
-                    sample_y * SKIN_SAMPLE_SPAN,
-                    min((sample_y + 1) * SKIN_SAMPLE_SPAN, field.rows),
-                ):
-                    for column in range(
-                        sample_x * SKIN_SAMPLE_SPAN,
-                        min((sample_x + 1) * SKIN_SAMPLE_SPAN, field.columns),
-                    ):
-                        cell = field.cells[row * field.columns + column]
-                        radius = minimum_radius + cell.expansion * (maximum_radius - minimum_radius)
-
-                        # Each cell occupies a square slot of side length spacing but its pigment is
-                        # a circle - calculate how much of the square is covered
-                        coverage = min(1.0, SKIN_CONTRAST * pi * (radius / spacing) ** 2)
-                        pigment = reflections[cell.pigment]
-
-                        # Uncovered slots reflect the backing directly; covered slots
-                        # combine pigment reflection with colour-filtered backing light.
-                        for channel in range(3):
-                            totals[channel] += (
-                                base[channel] * (1 - coverage) + pigment[channel] * coverage
-                            )
-                        count += 1
-
-                # Average only actual cells, including partial tiles at odd-sized edges.
-                samples.set_at(
-                    (sample_x, sample_y), tuple(_linear_to_srgb(total / count) for total in totals)
+                left = sample_x * SKIN_SAMPLE_SPAN
+                top = sample_y * SKIN_SAMPLE_SPAN
+                right = min(left + SKIN_SAMPLE_SPAN, field.columns)
+                bottom = min(top + SKIN_SAMPLE_SPAN, field.rows)
+                base = tuple(
+                    _srgb_to_linear(channel)
+                    for channel in iridophore_base(
+                        (left + right) / (2 * field.columns),
+                        (top + bottom) / (2 * field.rows),
+                    )
                 )
+                reflections = _pigment_reflections(base)
+                areas = self._sample_pigment_areas(field, spacing, (left, top, right, bottom))
+                sample_area = (right - left) * (bottom - top)
+                weights = {
+                    pigment: SKIN_CONTRAST * coverage_gain * area / sample_area
+                    for pigment, area in areas.items()
+                }
+                total_weight = sum(weights.values())
+                # Compensation can exceed physical area. Normalise pigment shares
+                # together rather than subtracting backing light or favouring a layer.
+                normalisation = max(1.0, total_weight)
+                colour = tuple(
+                    _linear_to_srgb(
+                        base[channel] * max(0.0, 1 - total_weight)
+                        + sum(
+                            reflections[pigment][channel] * weight / normalisation
+                            for pigment, weight in weights.items()
+                        )
+                    )
+                    for channel in range(3)
+                )
+                samples.set_at((sample_x, sample_y), colour)
 
         # Sharpen the integrated image rather than the discs. A small unsharp mask
         # strengthens pattern edges while leaving uniform regions unchanged.
@@ -504,6 +505,32 @@ class FieldView:
         # is a visual approximation of viewing distance, not a biological optical model.
         skin = pygame.transform.smoothscale(samples, rectangle.size)
         self.surface.blit(skin, rectangle)
+
+    @staticmethod
+    def _sample_pigment_areas(
+        field: ChromatophoreField,
+        spacing: float,
+        bounds: tuple[int, int, int, int],
+    ) -> dict[Pigment, float]:
+        """Integrate irregular disc intersections, including neighbours across sample edges.
+
+        :param field: Read-only field containing fixed organ geometry.
+        :param spacing: Display pixels per logical unit, positive.
+        :param bounds: Sample rectangle in logical spacing units.
+        :return: Covered area per pigment, in squared logical units.
+        """
+        left, top, right, bottom = bounds
+        areas = dict.fromkeys(Pigment, 0.0)
+        # Centres stay within their logical slots, and radii are below half a slot.
+        # One neighbouring row/column therefore contains every possible contributor.
+        for row in range(max(0, top - 1), min(field.rows, bottom + 1)):
+            for column in range(max(0, left - 1), min(field.columns, right + 1)):
+                index = row * field.columns + column
+                cell, organ = field.cells[index], field.geometry[index]
+                minimum_radius = min(MINIMUM_RADIUS / spacing, organ.radius_ratio)
+                radius = minimum_radius + cell.expansion * (organ.radius_ratio - minimum_radius)
+                areas[cell.pigment] += circle_rectangle_area(organ.x, organ.y, radius, bounds)
+        return areas
 
     def _draw_pigment_legend(self) -> None:
         """Label the pigment controls; buttons retain their own colour indicators."""

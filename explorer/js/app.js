@@ -114,7 +114,7 @@ function initialise() {
     );
     document.querySelector('#view-description').textContent = isSkin
       ? 'Cuttlefish-inspired pigments cover a pale backing with subtle blue-green reflective patches. Expanded pigments dim and colour-filter the reflection.'
-      : 'Each coloured disc is one pigment organ. Its radius changes as it follows a target size.';
+      : 'Each disc is a pigment organ with a fixed position and its own maximum size. Its radius follows the target.';
     if (announcement) status.textContent = announcement;
     view.draw(field);
   }

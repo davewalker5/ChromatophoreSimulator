@@ -1,5 +1,6 @@
 /** Rendering-independent cell state. All durations are simulation seconds. */
 import { DYNAMIC_STEP, DynamicController, validateTime } from './dynamics.js';
+import { DEFAULT_LAYOUT_SEED, generateLayout } from './morphology.js';
 import { generateTargets, validateDimensions } from './patterns.js';
 
 export const Pigment = Object.freeze({
@@ -8,11 +9,6 @@ export const Pigment = Object.freeze({
   BROWN: 'Brown',
   BLACK: 'Black',
 });
-const PIGMENT_TILE = [
-  [Pigment.YELLOW, Pigment.RED],
-  [Pigment.BROWN, Pigment.BLACK],
-];
-
 /**
  * Check normalised expansion before changing state.
  * @param {number} value - Requested current or target expansion.
@@ -103,18 +99,24 @@ export class ChromatophoreField {
    * @param {number} rows - Positive height in cells.
    * @param {number} columns - Positive width in cells.
    * @param {ResponseParameters} response - Shared immutable response settings.
-   * @throws {RangeError} If dimensions are invalid.
+   * @param {number} layoutSeed - Unsigned 32-bit seed for fixed organ geometry.
+   * @throws {RangeError} If dimensions or layout seed are invalid.
    */
-  constructor(rows = 50, columns = 50, response = new ResponseParameters()) {
+  constructor(
+    rows = 50,
+    columns = 50,
+    response = new ResponseParameters(),
+    layoutSeed = DEFAULT_LAYOUT_SEED,
+  ) {
     validateDimensions(rows, columns);
     this.rows = rows;
     this.columns = columns;
     this.response = response;
-    this.cells = Array.from({ length: rows * columns }, (_, index) => {
-      // Row/column parity preserves the tile on odd-width fields as well.
-      const pigment = PIGMENT_TILE[Math.floor(index / columns) % 2][(index % columns) % 2];
-      return new Chromatophore(0, 0, pigment);
-    });
+    this.geometry = generateLayout(rows, columns, layoutSeed);
+    const pigments = Object.values(Pigment);
+    this.cells = this.geometry.map(
+      (organ) => new Chromatophore(0, 0, pigments[organ.pigmentIndex]),
+    );
     this.targetDescription = 'Contracted';
     this.dynamic = null;
     this.dynamicRemainder = 0;

@@ -48,3 +48,35 @@ def test_pigments_filter_backing_light_by_colour() -> None:
     assert yellow[1] > red[1]
     assert max(differences[Pigment.BLACK]) < min(differences[Pigment.BROWN])
     assert max(differences[Pigment.BROWN]) < yellow[1]
+
+
+def test_skin_density_calibration_is_fixed_and_preserves_reference_area() -> None:
+    """Smaller irregular organs receive fixed compensation, independent of animation."""
+    from chromatophore_simulator.model import ChromatophoreField
+    from chromatophore_simulator.view import SKIN_REFERENCE_RADIUS_RATIO, _skin_coverage_gain
+
+    field = ChromatophoreField()
+    gain = _skin_coverage_gain(field)
+    assert gain > 1
+    maximum_area = sum(organ.radius_ratio**2 for organ in field.geometry)
+    assert gain * maximum_area == pytest.approx(len(field.cells) * SKIN_REFERENCE_RADIUS_RATIO**2)
+    field.set_expansion(1)
+    field.update(4)
+    assert _skin_coverage_gain(field) == gain
+    field.set_expansion(0)
+    field.update(4)
+    assert _skin_coverage_gain(field) == gain
+
+
+def test_skin_density_calibration_leaves_regular_reference_unchanged() -> None:
+    """The former radius distribution needs no extra density compensation."""
+    from dataclasses import replace
+
+    from chromatophore_simulator.model import ChromatophoreField
+    from chromatophore_simulator.view import SKIN_REFERENCE_RADIUS_RATIO, _skin_coverage_gain
+
+    field = ChromatophoreField(3, 5)
+    field.geometry = tuple(
+        replace(organ, radius_ratio=SKIN_REFERENCE_RADIUS_RATIO) for organ in field.geometry
+    )
+    assert _skin_coverage_gain(field) == pytest.approx(1)

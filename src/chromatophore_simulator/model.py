@@ -7,6 +7,7 @@ from random import Random
 from types import MappingProxyType
 
 from chromatophore_simulator.dynamics import DYNAMIC_STEP, DynamicController, DynamicDisplay
+from chromatophore_simulator.morphology import DEFAULT_LAYOUT_SEED, generate_layout
 from chromatophore_simulator.patterns import Pattern, generate_targets
 
 DEFAULT_ROWS = 50
@@ -20,11 +21,6 @@ class Pigment(Enum):
     RED = "Red"
     BROWN = "Brown"
     BLACK = "Black"
-
-
-# Repeat this tile across the field so all four pigments occur in each 2 × 2 patch.
-# Alternating positions keep every organ visible without a layer drawing order.
-PIGMENT_TILE = ((Pigment.YELLOW, Pigment.RED), (Pigment.BROWN, Pigment.BLACK))
 
 
 def _validate_time(value: float) -> None:
@@ -154,20 +150,22 @@ class Chromatophore:
 
 
 class ChromatophoreField:
-    """A regular row-major grid, with the origin at the upper-left corner."""
+    """Logical row-major targets with fixed, irregular physical organ geometry."""
 
     def __init__(
         self,
         rows: int = DEFAULT_ROWS,
         columns: int = DEFAULT_COLUMNS,
         response: ResponseParameters = ResponseParameters(),
+        layout_seed: int = DEFAULT_LAYOUT_SEED,
     ) -> None:
-        """Create contracted cells with four pigments alternating at fixed positions.
+        """Create contracted organs with a reproducible irregular layout.
 
         :param rows: Positive number of rows.
         :param columns: Positive number of columns.
         :param response: Validated response settings; may be replaced during a run.
-        :raises ValueError: If either dimension is not a positive integer.
+        :param layout_seed: Unsigned 32-bit seed for fixed organ morphology.
+        :raises ValueError: If a dimension or layout seed is invalid.
         """
         if any(type(size) is not int or size <= 0 for size in (rows, columns)):
             raise ValueError("Field dimensions must be positive integers")
@@ -175,12 +173,10 @@ class ChromatophoreField:
         self.columns = columns
         self.response = response
 
-        # Use row/column parity rather than flat index parity, so odd-width fields
-        # retain the same spatial tile. Each cell still owns its own state and delay.
+        self.geometry = generate_layout(rows, columns, layout_seed)
+        pigments = tuple(Pigment)
         self.cells = tuple(
-            Chromatophore(pigment=PIGMENT_TILE[row % 2][column % 2])
-            for row in range(rows)
-            for column in range(columns)
+            Chromatophore(pigment=pigments[organ.pigment_index]) for organ in self.geometry
         )
         self.target_description = "Contracted"
         self.dynamic: DynamicController | None = None

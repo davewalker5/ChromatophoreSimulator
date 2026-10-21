@@ -120,7 +120,8 @@ try {
     'solid',
   );
 
-  // Uniform coverage may show broad iridophore patches, but no sharp sampling seams.
+  // Real irregular organs intentionally vary in colour. A regular diagnostic
+  // fixture isolates unintended sample seams from that physical variation.
   await page.locator('#expansion-rate').selectOption('4');
   await page.locator('#contraction-rate').selectOption('4');
   await page.getByRole('button', { name: 'Uniform', exact: true }).click();
@@ -128,7 +129,24 @@ try {
     () => document.querySelector('#activity').textContent === 'Pattern settled',
   );
   await page.getByRole('button', { name: 'Skin View', exact: true }).click();
-  const spread = await page.locator('#field').evaluate((canvas) => {
+  const spread = await page.locator('#field').evaluate(async (canvas) => {
+    const { ChromatophoreField, Pigment } = await import('./js/model.js');
+    const { FieldView, ViewMode } = await import('./js/view.js');
+    const field = new ChromatophoreField();
+    field.geometry = field.geometry.map((_, index) => ({
+      x: (index % field.columns) + 0.5,
+      y: Math.floor(index / field.columns) + 0.5,
+      radiusRatio: 0.45,
+      pigmentIndex: index % 4,
+    }));
+    field.cells.forEach((cell, index) => {
+      cell.pigment = Object.values(Pigment)[index % 4];
+    });
+    field.setExpansion(0.5);
+    field.update(4);
+    const diagnostic = new FieldView(canvas);
+    diagnostic.mode = ViewMode.SKIN;
+    diagnostic.draw(field);
     const { width, height, data } = canvas
       .getContext('2d')
       .getImageData(0, 0, canvas.width, canvas.height);

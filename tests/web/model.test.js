@@ -79,12 +79,13 @@ test('validation is atomic and covers dimensions, targets, durations and rates',
   );
 });
 
-test('pigments preserve spatial parity on odd-width fields', () => {
-  const field = new ChromatophoreField(2, 3);
-  assert.deepEqual(
-    field.cells.map((cell) => cell.pigment),
-    [Pigment.YELLOW, Pigment.RED, Pigment.YELLOW, Pigment.BROWN, Pigment.BLACK, Pigment.BROWN],
+test('pigments remain balanced and deterministic on odd-width fields', () => {
+  const field = new ChromatophoreField(3, 3);
+  const counts = Object.values(Pigment).map(
+    (pigment) => field.cells.filter((cell) => cell.pigment === pigment).length,
   );
+  assert.ok(Math.max(...counts) - Math.min(...counts) <= 1);
+  assert.deepEqual(field.geometry, new ChromatophoreField(3, 3).geometry);
 });
 
 test('rate changes apply immediately; delay changes affect future static targets', () => {
@@ -163,7 +164,7 @@ test('mottles repeat by seed and interval, including historical revisits', () =>
   assert.deepEqual([...controller.targetsAt(0)], initial);
 });
 
-test('skin samples preserve state and integrate odd edges without grids', () => {
+test('skin samples preserve irregular state and integrate odd edges', () => {
   const field = new ChromatophoreField(50, 50);
   field.setExpansion(0.5);
   field.update(2);
@@ -171,9 +172,8 @@ test('skin samples preserve state and integrate odd edges without grids', () => 
   const { pixels, width, height } = skinSamples(field, undefined, 0);
   assert.equal(width, 25);
   assert.equal(height, 25);
-  for (let offset = 0; offset < pixels.length; offset += 4) {
-    assert.deepEqual(pixels.slice(offset, offset + 4), pixels.slice(0, 4));
-  }
+  assert.ok(new Set(pixels).size > 4, 'Irregular geometry produces natural colour variation');
+  for (let offset = 3; offset < pixels.length; offset += 4) assert.equal(pixels[offset], 255);
   assert.equal(JSON.stringify(field), before);
   const odd = skinSamples(new ChromatophoreField(3, 5));
   assert.equal(odd.width, 3);
@@ -220,6 +220,17 @@ test('static targets, all deterministic signals and delayed state traces match P
   });
   assert.equal(result.status, 0, result.stderr);
   const reference = JSON.parse(result.stdout);
+  for (const layout of reference.layouts) {
+    const field = new ChromatophoreField(
+      layout.rows,
+      layout.columns,
+      new ResponseParameters(),
+      layout.seed,
+    );
+    field.geometry.forEach((organ, index) =>
+      close([organ.x, organ.y, organ.radiusRatio, organ.pigmentIndex], layout.geometry[index]),
+    );
+  }
   for (const sample of reference.patterns) {
     close(generateTargets(sample.pattern, sample.rows, sample.columns), sample.targets);
   }
@@ -294,7 +305,8 @@ test('pigment levels preserve source targets, delays and independent groups', ()
   targets.fill(0);
   field.update(0.2);
   const sizes = field.cells.map((cell) => cell.expansion);
-  const redDelay = field.cells[1].delayRemaining;
+  const redCell = field.cells.find((cell) => cell.pigment === Pigment.RED);
+  const redDelay = redCell.delayRemaining;
   for (const level of [0.25, 0.5, 0, 1]) {
     field.setPigmentLevel(Pigment.YELLOW, level);
     assert.deepEqual(
@@ -307,13 +319,13 @@ test('pigment levels preserve source targets, delays and independent groups', ()
         (target, index) => target * (field.cells[index].pigment === Pigment.YELLOW ? level : 1),
       ),
     );
-    assert.equal(field.cells[1].delayRemaining, redDelay);
+    assert.equal(redCell.delayRemaining, redDelay);
   }
   field.setPigmentLevel(Pigment.RED, 0.5);
   field.update(0.2);
-  const delay = field.cells[1].delayRemaining;
+  const delay = redCell.delayRemaining;
   field.setPigmentLevel(Pigment.RED, 0.5);
-  assert.equal(field.cells[1].delayRemaining, delay);
+  assert.equal(redCell.delayRemaining, delay);
   assert.throws(() => {
     field.pigmentLevels[Pigment.RED] = 0;
   }, TypeError);
@@ -324,7 +336,11 @@ test('pigment levels preserve source targets, delays and independent groups', ()
   }
   assert.throws(() => field.setPigmentLevel('Unknown', 0.5), RangeError);
   field.applyPattern(Pattern.UNIFORM);
-  assert.equal(field.cells[1].targetExpansion, 0.25);
+  assert.ok(
+    field.cells
+      .filter((cell) => cell.pigment === Pigment.RED)
+      .every((cell) => cell.targetExpansion === 0.25),
+  );
   field.resetPigmentLevels();
   assert.ok(field.cells.every((cell) => cell.targetExpansion === 0.5));
 });
