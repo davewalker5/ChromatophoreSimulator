@@ -11,7 +11,20 @@ import {
 import { Pattern, generateTargets } from '../../explorer/js/patterns.js';
 import { DynamicController, DynamicDisplay } from '../../explorer/js/dynamics.js';
 import { SeededRandom } from '../../explorer/js/random.js';
-import { roundEven, skinSamples, SKIN_COLOUR } from '../../explorer/js/view.js';
+import { roundEven, skinSamples, sharpenSkin, SKIN_COLOUR } from '../../explorer/js/view.js';
+
+test('skin sharpening preserves flat colours and strengthens edges without changing alpha', () => {
+  const flat = new Uint8ClampedArray([120, 100, 80, 255]);
+  assert.deepEqual(sharpenSkin(flat.slice(), 1, 1), flat);
+  const edge = new Uint8ClampedArray([80, 80, 80, 255, 160, 160, 160, 255]);
+  const result = sharpenSkin(edge.slice(), 2, 1);
+  assert.ok(result[0] < edge[0]);
+  assert.ok(result[4] > edge[4]);
+  assert.equal(result[3], 255);
+  assert.equal(result[7], 255);
+  const extreme = new Uint8ClampedArray([0, 0, 0, 255, 255, 255, 255, 255]);
+  assert.deepEqual(sharpenSkin(extreme.slice(), 2, 1), extreme);
+});
 
 /** Assert floating-point sequences agree within a meaningful model tolerance. */
 function close(actual, expected, tolerance = 1e-10) {
