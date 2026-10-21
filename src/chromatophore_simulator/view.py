@@ -19,6 +19,8 @@ HEADER_ICON_POSITION = (24, 10)
 HEADER_TEXT_LEFT = 102
 BACKGROUND = (24, 32, 37)
 SKIN_COLOUR = (236, 220, 190)
+IRIDOPHORE_COLOUR = (90, 185, 195)
+IRIDOPHORE_STRENGTH = 0.45  # Fixed-light structural reflection, beneath pigment.
 
 # A clarity-first palette, rather than a physiological colour model. Keep it in
 # the view so pigment identity and simulation behaviour do not depend on RGB values.
@@ -37,7 +39,7 @@ HOVER_COLOUR = (72, 99, 107)
 MINIMUM_RADIUS = 0.8
 RADIUS_SPACING_RATIO = 0.45
 SKIN_SAMPLE_SPAN = 4  # Integrate roughly one 2 × 2 pigment tile per low-resolution sample.
-SKIN_CONTRAST = 2.0  # Amplify pigment contrast against bare skin; 1.0 restores raw averaging.
+SKIN_CONTRAST = 2.0  # Compensate pigment coverage for diagnostic gaps; 1.0 uses raw area.
 SKIN_SHARPNESS = 1.2  # Unsharp mask strength on the integrated pigment image.
 
 PATTERN_SHORTCUTS = (
@@ -308,6 +310,10 @@ class FieldView:
         samples = pygame.Surface(sample_size)
         maximum_radius = spacing * RADIUS_SPACING_RATIO
         minimum_radius = min(MINIMUM_RADIUS, maximum_radius)
+        base = tuple(
+            round(backing + IRIDOPHORE_STRENGTH * (reflection - backing))
+            for backing, reflection in zip(SKIN_COLOUR, IRIDOPHORE_COLOUR, strict=True)
+        )
 
         for sample_y in range(sample_size[1]):
             for sample_x in range(sample_size[0]):
@@ -330,14 +336,13 @@ class FieldView:
 
                         # Each cell occupies a square slot of side length spacing but its pigment is
                         # a circle - calculate how much of the square is covered
-                        coverage = pi * (radius / spacing) ** 2
+                        coverage = min(1.0, SKIN_CONTRAST * pi * (radius / spacing) ** 2)
                         pigment = PIGMENT_COLOURS[cell.pigment]
 
-                        # For each red, green, and blue colour channel mix the pigment with the
-                        # colout for uncovered skin
+                        # Expanded pigment occludes the underlying structural reflector.
                         for channel in range(3):
                             totals[channel] += (
-                                SKIN_COLOUR[channel] * (1 - coverage) + pigment[channel] * coverage
+                                base[channel] * (1 - coverage) + pigment[channel] * coverage
                             )
                         count += 1
 
@@ -345,20 +350,6 @@ class FieldView:
                 samples.set_at(
                     (sample_x, sample_y), tuple(round(total / count) for total in totals)
                 )
-
-        # Averaging includes the deliberately wide diagnostic gaps between discs,
-        # which dilutes their colour. Amplify each sample's difference from bare skin
-        # before enlargement: skin + gain * (sample - skin). Bare skin stays unchanged.
-        # A fixed gain avoids brightness pumping as patterns animate; clamp channels
-        # to valid RGB values. Work on the small sample grid to keep this inexpensive.
-        for y in range(samples.get_height()):
-            for x in range(samples.get_width()):
-                colour = samples.get_at((x, y))
-                enhanced = tuple(
-                    max(0, min(255, round(base + SKIN_CONTRAST * (channel - base))))
-                    for channel, base in zip(colour[:3], SKIN_COLOUR, strict=True)
-                )
-                samples.set_at((x, y), enhanced)
 
         # Sharpen the integrated image rather than the discs. A small unsharp mask
         # strengthens pattern edges while leaving uniform regions unchanged.

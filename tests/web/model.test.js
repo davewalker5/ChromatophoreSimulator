@@ -177,6 +177,17 @@ test('skin samples preserve state and integrate odd edges without grids', () => 
   assert.ok(pixels[0] < SKIN_COLOUR[0]);
 });
 
+test('iridophore reflection is visible through retracted pigment and hidden by expansion', () => {
+  const field = new ChromatophoreField(50, 50);
+  const reflected = skinSamples(field).pixels;
+  const bare = skinSamples(field, undefined, 0).pixels;
+  assert.ok(reflected[0] < bare[0], 'Reflection adds a blue-green cast');
+  assert.ok(reflected[2] > bare[2]);
+  field.setExpansion(1);
+  field.update(4);
+  assert.deepEqual(skinSamples(field).pixels, skinSamples(field, undefined, 0).pixels);
+});
+
 test('static targets, all deterministic signals and delayed state traces match Python', () => {
   const result = spawnSync(process.env.PYTHON ?? 'python3', ['tests/web/reference.py'], {
     encoding: 'utf8',
@@ -198,7 +209,8 @@ test('static targets, all deterministic signals and delayed state traces match P
     const field = new ChromatophoreField(sample.rows, sample.columns);
     field.setExpansion(sample.expansion);
     field.update(4);
-    assert.deepEqual([...skinSamples(field).pixels], sample.pixels);
+    const skin = skinSamples(field);
+    assert.deepEqual([...sharpenSkin(skin.pixels, skin.width, skin.height)], sample.pixels);
   }
   for (const trace of reference.traces) {
     const field = new ChromatophoreField(5, 7, new ResponseParameters(0.5, 0.25, 0.5));

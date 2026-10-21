@@ -3,6 +3,15 @@ import { Pigment } from './model.js';
 
 export const LOGICAL_SIZE = 550;
 export const SKIN_COLOUR = Object.freeze([236, 220, 190]);
+// Fixed illumination: a blue-green structural reflector above the pale backing.
+export const IRIDOPHORE_COLOUR = Object.freeze([90, 185, 195]);
+export const IRIDOPHORE_STRENGTH = 0.45;
+
+export function iridophoreBase(strength = IRIDOPHORE_STRENGTH) {
+  return SKIN_COLOUR.map((base, channel) =>
+    roundEven(base + strength * (IRIDOPHORE_COLOUR[channel] - base)),
+  );
+}
 export const PIGMENT_COLOURS = Object.freeze({
   [Pigment.YELLOW]: Object.freeze([213, 158, 24]),
   [Pigment.RED]: Object.freeze([190, 48, 43]),
@@ -33,13 +42,14 @@ export function roundEven(value) {
  * @param {Uint8ClampedArray} [pixels] - Optional reusable RGBA destination.
  * @returns {{width: number, height: number, pixels: Uint8ClampedArray}} Sample image.
  */
-export function skinSamples(field, pixels) {
+export function skinSamples(field, pixels, iridophoreStrength = IRIDOPHORE_STRENGTH) {
   const width = Math.ceil(field.columns / SKIN_SAMPLE_SPAN);
   const height = Math.ceil(field.rows / SKIN_SAMPLE_SPAN);
   const destination = pixels ?? new Uint8ClampedArray(width * height * 4);
   const spacing = LOGICAL_SIZE / Math.max(field.rows, field.columns);
   const maximumRadius = spacing * RADIUS_SPACING_RATIO;
   const minimumRadius = Math.min(MINIMUM_RADIUS, maximumRadius);
+  const base = iridophoreBase(iridophoreStrength);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const totals = [0, 0, 0];
@@ -58,26 +68,19 @@ export function skinSamples(field, pixels) {
           const radius = minimumRadius + cell.expansion * (maximumRadius - minimumRadius);
           // The circle covers πr² of its spacing² slot. Analytical coverage avoids
           // false grids caused by raster sampling alternately hitting discs and gaps.
-          const coverage = Math.PI * (radius / spacing) ** 2;
+          // Contrast compensates for the diagnostic gaps; clamp occlusion so
+          // expanded pigment hides rather than subtracts the reflective layer.
+          const coverage = Math.min(1, SKIN_CONTRAST * Math.PI * (radius / spacing) ** 2);
           const pigment = PIGMENT_COLOURS[cell.pigment];
           for (let channel = 0; channel < 3; channel++) {
-            totals[channel] += SKIN_COLOUR[channel] * (1 - coverage) + pigment[channel] * coverage;
+            totals[channel] += base[channel] * (1 - coverage) + pigment[channel] * coverage;
           }
           count++;
         }
       }
       const offset = (y * width + x) * 4;
       for (let channel = 0; channel < 3; channel++) {
-        // Round the averaged sample before contrast, just as the Python surface
-        // stores integer channels. Count only real cells at odd-sized edges.
-        const sample = roundEven(totals[channel] / count);
-        destination[offset + channel] = Math.max(
-          0,
-          Math.min(
-            255,
-            roundEven(SKIN_COLOUR[channel] + SKIN_CONTRAST * (sample - SKIN_COLOUR[channel])),
-          ),
-        );
+        destination[offset + channel] = roundEven(totals[channel] / count);
       }
       destination[offset + 3] = 255;
     }

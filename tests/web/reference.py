@@ -87,7 +87,12 @@ def reference_results():
                         captured.extend(surface.get_at((x, y)))
                 return original_scale(surface, size)
 
-            with patch("pygame.transform.smoothscale", capture_samples):
+            # Compare using the web viewer's sampling resolution; the desktop's
+            # viewing-distance setting may be tuned independently.
+            with (
+                patch("pygame.transform.smoothscale", capture_samples),
+                patch("chromatophore_simulator.view.SKIN_SAMPLE_SPAN", 2),
+            ):
                 renderer._draw_skin(pygame.Rect(0, 0, 550, 550), field, 550 / max(rows, columns))
             results["skin"].append(
                 {
