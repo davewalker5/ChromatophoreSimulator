@@ -62,7 +62,7 @@ MINIMUM_RADIUS = 0.8
 RADIUS_SPACING_RATIO = 0.45
 SKIN_SAMPLE_SPAN = 4  # Integrate roughly one 2 × 2 pigment tile per low-resolution sample.
 SKIN_CONTRAST = 2.0  # Compensate pigment coverage for diagnostic gaps; 1.0 uses raw area.
-SKIN_SHARPNESS = 1.2  # Unsharp mask strength on the integrated pigment image.
+SKIN_SHARPNESS = 2.0  # Unsharp mask strength on the integrated pigment image.
 
 PATTERN_SHORTCUTS = (
     (Pattern.UNIFORM, "U"),

@@ -35,7 +35,7 @@ export const MINIMUM_RADIUS = 0.8;
 export const RADIUS_SPACING_RATIO = 0.45;
 export const SKIN_SAMPLE_SPAN = 2;
 export const SKIN_CONTRAST = 2;
-export const SKIN_SHARPNESS = 1.2;
+export const SKIN_SHARPNESS = 2.0;
 export const ViewMode = Object.freeze({ CHROMATOPHORES: 'Chromatophores', SKIN: 'Skin' });
 
 /**
