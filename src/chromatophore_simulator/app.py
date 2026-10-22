@@ -9,6 +9,7 @@ import pygame
 from chromatophore_simulator.dynamics import DynamicDisplay
 from chromatophore_simulator.model import ChromatophoreField, Pigment, ResponseParameters
 from chromatophore_simulator.patterns import Pattern
+from chromatophore_simulator.reflection import ANGLE_PRESETS, ReflectionSettings
 from chromatophore_simulator.timing import NATURAL_REFERENCE_RATE
 from chromatophore_simulator.view import (
     DYNAMIC_SHORTCUTS,
@@ -18,6 +19,7 @@ from chromatophore_simulator.view import (
     DynamicAction,
     FieldView,
     PigmentAction,
+    ReflectionAction,
     TimingAction,
     ViewMode,
 )
@@ -142,6 +144,9 @@ def handle_event(
             pygame.K_8: Pigment.BLACK,
             pygame.K_0: PigmentAction.RESET,
             pygame.K_9: TimingAction.TOGGLE,
+            pygame.K_a: ReflectionAction.VIEW,
+            pygame.K_i: ReflectionAction.LIGHT,
+            pygame.K_o: ReflectionAction.RESET,
         }.get(event.key)
         if command is None:
             command = {
@@ -150,7 +155,17 @@ def handle_event(
             }.get(event.key)
     elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
         command = view.command_at(event.pos)
-    if isinstance(command, ViewMode):
+    if isinstance(command, ReflectionAction):
+        # Optical controls belong to the view, so Hold, cell delays and phase are untouched.
+        view_angle, light_angle = view.reflection.view_angle, view.reflection.light_angle
+        if command is ReflectionAction.VIEW:
+            view_angle = _next_preset(view_angle, ANGLE_PRESETS)
+        elif command is ReflectionAction.LIGHT:
+            light_angle = _next_preset(light_angle, ANGLE_PRESETS)
+        else:
+            view_angle = light_angle = 0.0
+        view.reflection = ReflectionSettings(view_angle, light_angle)
+    elif isinstance(command, ViewMode):
         # Presentation belongs to the view; switching never reissues model targets.
         view.mode = command
     elif command is not None:

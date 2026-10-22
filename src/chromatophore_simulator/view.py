@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from importlib.resources import files
-from math import exp
+from math import exp, isfinite
 from types import MappingProxyType
 
 import pygame
@@ -12,16 +12,26 @@ from chromatophore_simulator.coverage import circle_rectangle_area
 from chromatophore_simulator.dynamics import DynamicDisplay
 from chromatophore_simulator.model import ChromatophoreField, Pigment
 from chromatophore_simulator.patterns import Pattern
+from chromatophore_simulator.reflection import (
+    DEFAULT_REFLECTION_RESPONSES,
+    REFERENCE_REFLECTION_COLOUR,
+    AngularReflection,
+    ReflectionSettings,
+    reflection_responses,
+)
 
 WINDOW_SIZE = (1100, 820)
 FIELD_RECT = (30, 82, 700, 550)
+FIELD_CONTROL_TOP = 651
+FIELD_CONTROL_BUTTON_SIZE = (220, 40)
+FIELD_CONTROL_ROW_SPACING = 50
 HEADER_ICON_SIZE = (64, 64)
 HEADER_ICON_POSITION = (24, 10)
 HEADER_TEXT_LEFT = 102
 BACKGROUND = (24, 32, 37)
 SKIN_COLOUR = (235, 232, 220)
-IRIDOPHORE_COLOUR = (126, 179, 205)
-IRIDOPHORE_STRENGTH = 0.28  # Fixed-light structural reflection, beneath pigment.
+IRIDOPHORE_COLOUR = REFERENCE_REFLECTION_COLOUR
+IRIDOPHORE_STRENGTH = 0.28  # Reference-angle reflection beneath pigment.
 
 # Sepia officinalis-inspired palette under neutral daylight (D65 target).
 # Illustrative sRGB values, not measured reflectance. Black represents dark brown.
@@ -32,18 +42,35 @@ IRIDOPHORE_PATCHES = (
 )
 
 
-def iridophore_base(x: float, y: float) -> tuple[int, ...]:
-    """Approximate local reflection at normalised coordinates under fixed daylight.
+def iridophore_base(
+    x: float,
+    y: float,
+    angular_responses: tuple[AngularReflection, ...] = DEFAULT_REFLECTION_RESPONSES,
+) -> tuple[int, ...]:
+    """Mix local structural reflection into the pale backing before pigment filtering.
 
-    Patches are illustrative, not an anatomical map or an angle-dependent model.
+    The strongest spatial patch wins, preserving the original reference-angle
+    appearance. Reflection strength is capped so this remains a bounded mixture.
+
+    :param x: Normalised horizontal coordinate in [0, 1].
+    :param y: Normalised vertical coordinate in [0, 1].
+    :param angular_responses: One precomputed angular response per fixed patch.
+    :return: Three integer sRGB channels in [0, 255].
+    :raises ValueError: If coordinates or response count are invalid.
     """
-    patch = max(
-        exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2))
-        for cx, cy, rx, ry in IRIDOPHORE_PATCHES
+    if not all(isfinite(value) and 0 <= value <= 1 for value in (x, y)):
+        raise ValueError("Skin coordinates must be finite and between 0 and 1")
+    if len(angular_responses) != len(IRIDOPHORE_PATCHES):
+        raise ValueError("Angular response count must match iridophore patches")
+    contributions = tuple(
+        exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)) * response.strength
+        for (cx, cy, rx, ry), response in zip(IRIDOPHORE_PATCHES, angular_responses, strict=True)
     )
+    index = max(range(len(contributions)), key=contributions.__getitem__)
+    strength = max(0.0, min(1.0, IRIDOPHORE_STRENGTH * contributions[index]))
     return tuple(
-        round(backing + IRIDOPHORE_STRENGTH * patch * (reflection - backing))
-        for backing, reflection in zip(SKIN_COLOUR, IRIDOPHORE_COLOUR, strict=True)
+        round(backing + strength * (reflection - backing))
+        for backing, reflection in zip(SKIN_COLOUR, angular_responses[index].colour, strict=True)
     )
 
 
@@ -129,7 +156,7 @@ MINIMUM_RADIUS = 0.8
 SKIN_SAMPLE_SPAN = 4  # Integrate four logical spacings per sample, including partial edges.
 SKIN_CONTRAST = 2.0  # Display coverage boost, applied after fixed layout calibration.
 SKIN_REFERENCE_RADIUS_RATIO = 0.45  # Preserve the pre-morphology layout's pigment density.
-SKIN_SHARPNESS = 2.0  # Unsharp mask strength on the integrated pigment image.
+SKIN_SHARPNESS = 0.75  # Gentle edge definition without the former strong colour overshoot.
 
 PATTERN_SHORTCUTS = (
     (Pattern.UNIFORM, "U"),
@@ -185,6 +212,14 @@ class Command(Enum):
     RESPONSE_DELAY = "Delay [3]"
 
 
+class ReflectionAction(Enum):
+    """Presentation-only controls for camera and illumination directions."""
+
+    VIEW = "View angle [A]"
+    LIGHT = "Light angle [I]"
+    RESET = "Reset angles [O]"
+
+
 class TimingAction(Enum):
     """Switch between smooth local kinetics and uniform linear motion."""
 
@@ -217,6 +252,7 @@ class Button:
         | Pigment
         | PigmentAction
         | TimingAction
+        | ReflectionAction
     )
     rectangle: pygame.Rect
 
@@ -240,10 +276,17 @@ class FieldView:
                 pygame.image.load(icon_file, "cuttlefish.png"), HEADER_ICON_SIZE
             )
         self.mode = ViewMode.CHROMATOPHORES
+        self.reflection = ReflectionSettings()
         self.buttons = tuple(
             Button(
                 command,
-                pygame.Rect(30 + (index % 3) * 240, 651 + (index // 3) * 58, 220, 48),
+                pygame.Rect(
+                    (
+                        30 + (index % 3) * 240,
+                        FIELD_CONTROL_TOP + (index // 3) * FIELD_CONTROL_ROW_SPACING,
+                    ),
+                    FIELD_CONTROL_BUTTON_SIZE,
+                ),
             )
             for index, command in enumerate(Command)
         )
@@ -262,6 +305,16 @@ class FieldView:
             Button(pigment, pygame.Rect(760 + (index % 2) * 160, 620 + (index // 2) * 42, 150, 36))
             for index, pigment in enumerate(Pigment)
         ) + (Button(PigmentAction.RESET, pygame.Rect(760, 708, 310, 32)),)
+        self.reflection_buttons = tuple(
+            Button(
+                action,
+                pygame.Rect(
+                    (30 + index * 240, FIELD_CONTROL_TOP + 2 * FIELD_CONTROL_ROW_SPACING),
+                    FIELD_CONTROL_BUTTON_SIZE,
+                ),
+            )
+            for index, action in enumerate(ReflectionAction)
+        )
         self.timing_buttons = (Button(TimingAction.TOGGLE, pygame.Rect(490, 44, 240, 30)),)
         self.view_buttons = tuple(
             Button(mode, pygame.Rect(760 + index * 160, 756, 150, 42))
@@ -285,6 +338,7 @@ class FieldView:
         | Pigment
         | PigmentAction
         | TimingAction
+        | ReflectionAction
         | None
     ):
         """Find the button under a mouse position.
@@ -298,6 +352,7 @@ class FieldView:
             *self.dynamic_buttons,
             *self.view_buttons,
             *self.timing_buttons,
+            *self.reflection_buttons,
             *self.pigment_buttons,
         ):
             if button.rectangle.collidepoint(position):
@@ -379,6 +434,7 @@ class FieldView:
             *self.dynamic_buttons,
             *self.view_buttons,
             *self.timing_buttons,
+            *self.reflection_buttons,
             *self.pigment_buttons,
         ):
             # Hover highlighting is visual feedback only; event handling applies commands.
@@ -389,6 +445,10 @@ class FieldView:
             )
             pygame.draw.rect(self.surface, colour, button.rectangle, border_radius=7)
             label_text = button.command.value
+            if button.command is ReflectionAction.VIEW:
+                label_text += f": {self.reflection.view_angle:g}°"
+            elif button.command is ReflectionAction.LIGHT:
+                label_text += f": {self.reflection.light_angle:g}°"
             if button.command is TimingAction.TOGGLE:
                 label_text += ": on" if field.natural_timing else ": off"
                 if field.natural_timing:
@@ -436,20 +496,12 @@ class FieldView:
 
             # Centre using the rendered text's bounds so different label lengths fit neatly.
             self.surface.blit(label, label.get_rect(center=button.rectangle.center))
-        hint = self.font.render(
-            "Click settings to cycle  ·  Delay lags the moving signal"
-            if field.dynamic
-            else "Click settings to cycle  ·  Rates apply now; delay applies to new targets",
-            True,
-            TEXT_COLOUR,
-        )
-        self.surface.blit(hint, (30, 769))
         exit_hint = self.font.render(
-            "Keys: E / C / R and 1 / 2 / 3   ·   Tab: switch view   ·   Esc: exit",
+            "A / I: angles  ·  O: reset angles  ·  Tab: switch view  ·  Esc: exit",
             True,
             TEXT_COLOUR,
         )
-        self.surface.blit(exit_hint, (30, 794))
+        self.surface.blit(exit_hint, (30, FIELD_CONTROL_TOP + 3 * FIELD_CONTROL_ROW_SPACING))
         self._draw_pigment_legend()
 
     def _draw_skin(self, rectangle: pygame.Rect, field: ChromatophoreField, spacing: float) -> None:
@@ -466,6 +518,7 @@ class FieldView:
 
         samples = pygame.Surface(sample_size)
         coverage_gain = _skin_coverage_gain(field)
+        angular_responses = reflection_responses(self.reflection)
 
         for sample_y in range(sample_size[1]):
             for sample_x in range(sample_size[0]):
@@ -478,6 +531,7 @@ class FieldView:
                     for channel in iridophore_base(
                         (left + right) / (2 * field.columns),
                         (top + bottom) / (2 * field.rows),
+                        angular_responses,
                     )
                 )
                 reflections = _pigment_reflections(base)

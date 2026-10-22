@@ -42,6 +42,22 @@ try {
   watch(page);
   await page.goto(url);
   await page.waitForFunction(() => !document.querySelector('#controls').disabled);
+  const sections = page.locator('details.control-section');
+  assert.deepEqual(
+    await sections.evaluateAll((items) => items.map((section) => section.open)),
+    [true, true, false, false, false, false],
+    'Only static and dynamic sections start expanded',
+  );
+  await page.screenshot({ path: `${output}/${engine}-collapsed-controls.png`, fullPage: true });
+  const summaries = sections.locator('summary');
+  await summaries.nth(2).focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await sections.nth(2).evaluate((section) => section.open), true);
+  await page.keyboard.press('Space');
+  assert.equal(await sections.nth(2).evaluate((section) => section.open), false);
+  assert.equal(await page.locator('#response-timing').isVisible(), false);
+  // Expand the remaining panels before exercising their existing form controls.
+  for (let index = 2; index < 6; index++) await summaries.nth(index).click();
   assert.equal(await page.locator('#response-timing').inputValue(), 'natural');
   assert.equal(await page.locator('#expansion-rate').inputValue(), '4');
   assert.equal(await page.locator('#contraction-rate').inputValue(), '4');
@@ -80,6 +96,10 @@ try {
     assert.equal(await page.locator('#display-speed').inputValue(), '1');
     await page.locator('#display-speed').selectOption('2');
   }
+  await page.locator('#view-angle').selectOption('30');
+  assert.equal(await page.locator('#current-pattern').textContent(), 'Changing mottle');
+  assert.equal(await page.locator('#display-speed').inputValue(), '2');
+  await page.getByRole('button', { name: 'Reset angles', exact: true }).click();
   await page.locator('#response-timing').selectOption('uniform');
   assert.equal(await page.locator('#current-pattern').textContent(), 'Changing mottle');
   assert.equal(await page.locator('#display-speed').inputValue(), '2');
@@ -94,11 +114,28 @@ try {
   assert.equal(await canvasImage(page), held, 'Hold must stop changes');
   await page.getByRole('button', { name: 'Skin View', exact: true }).click();
   assert.notEqual(await canvasImage(page), held, 'Skin should render a different view');
+  const referenceSkin = await canvasImage(page);
+  await page.locator('#view-angle').selectOption('45');
+  assert.notEqual(await canvasImage(page), referenceSkin, 'Camera angle changes Skin View');
+  assert.equal(await page.locator('#current-pattern').textContent(), 'Held');
+  await page.locator('#light-angle').selectOption('-30');
+  assert.equal(await page.locator('#view-angle').inputValue(), '45');
+  await page.screenshot({ path: `${output}/${engine}-angled-skin.png`, fullPage: true });
+  await page.getByRole('button', { name: 'Reset angles', exact: true }).click();
+  assert.equal(await canvasImage(page), referenceSkin, 'Angle reset restores the same held skin');
   await page.screenshot({ path: `${output}/${engine}-skin.png`, fullPage: true });
   await page.getByRole('button', { name: 'Chromatophore View', exact: true }).click();
   assert.equal(await canvasImage(page), held, 'Switching view must preserve cell state');
 
   await page.locator('#field').focus();
+  await page.keyboard.press('a');
+  await page.keyboard.press('i');
+  assert.equal(await page.locator('#view-angle').inputValue(), '15');
+  assert.equal(await page.locator('#light-angle').inputValue(), '15');
+  assert.equal(await canvasImage(page), held, 'Diagnostic discs are independent of optical angles');
+  await page.keyboard.press('o');
+  assert.equal(await page.locator('#view-angle').inputValue(), '0');
+  assert.equal(await page.locator('#light-angle').inputValue(), '0');
   await page.keyboard.press('w');
   assert.equal(await page.locator('#current-pattern').textContent(), 'Travelling wave');
   await page.keyboard.press('4');

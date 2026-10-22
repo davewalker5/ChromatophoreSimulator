@@ -83,13 +83,17 @@
         <aside class="controls card" aria-label="Simulation controls">
           <fieldset id="controls" disabled>
             <legend class="sr-only">Simulation controls</legend>
-            <section class="control-section first">
-              <h2>01 <span>Static patterns</span></h2>
+            <details class="control-section first" open>
+              <summary>
+                <h2>01 <span>Static patterns</span></h2>
+              </summary>
               <p class="hint">Set a target. Watch the cells move towards it.</p>
               <div id="patterns" class="button-grid"></div>
-            </section>
-            <section class="control-section">
-              <h2>02 <span>Dynamic displays</span></h2>
+            </details>
+            <details class="control-section" open>
+              <summary>
+                <h2>02 <span>Dynamic displays</span></h2>
+              </summary>
               <p class="hint">Keep the instructions moving.</p>
               <div id="displays" class="button-grid"></div>
               <p class="hint flash-note">
@@ -104,9 +108,11 @@
                   <option value="4">4×</option>
                 </select>
               </label>
-            </section>
-            <section class="control-section">
-              <h2>03 <span>Cell response</span></h2>
+            </details>
+            <details class="control-section">
+              <summary>
+                <h2>03 <span>Cell response</span></h2>
+              </summary>
               <label class="field" for="response-timing"
                 ><span>Response timing</span>
                 <select id="response-timing">
@@ -150,24 +156,46 @@
                 differences. Uniform timing uses constant-speed motion. Lower rates slow either
                 mode; response delay is additional.
               </p>
-            </section>
-            <section class="control-section">
-              <h2>04 <span>Pigment levels</span></h2>
+            </details>
+            <details class="control-section">
+              <summary>
+                <h2>04 <span>Pigment levels</span></h2>
+              </summary>
               <p class="hint">
                 Scale each pigment group's expansion targets. Applies to patterns and moving
                 displays; 100% follows the full pattern.
               </p>
               <div id="pigment-levels"></div>
               <button type="button" data-command="reset-pigments">Reset pigment levels</button>
-            </section>
-            <section class="control-section">
-              <h2>05 <span>Whole field</span></h2>
+            </details>
+            <details class="control-section">
+              <summary>
+                <h2>05 <span>Reflection angles</span></h2>
+              </summary>
+              <p class="hint">
+                In Skin View, tilt the viewing direction or light to explore iridescence. 0° looks
+                straight at the skin; positive angles point right. The patch stays flat.
+              </p>
+              <label class="field" for="view-angle"
+                ><span>Viewing angle</span
+                ><select id="view-angle"></select
+              ></label>
+              <label class="field" for="light-angle"
+                ><span>Light angle</span
+                ><select id="light-angle"></select
+              ></label>
+              <button type="button" data-reflection="reset">Reset angles</button>
+            </details>
+            <details class="control-section">
+              <summary>
+                <h2>06 <span>Whole field</span></h2>
+              </summary>
               <div class="button-grid">
                 <button type="button" class="primary" data-command="expand">Expand all</button>
                 <button type="button" data-command="contract">Contract all</button>
                 <button type="button" data-command="randomise" class="wide">Randomise cells</button>
               </div>
-            </section>
+            </details>
           </fieldset>
         </aside>
         <section class="card explanation" aria-labelledby="about-title">
@@ -183,8 +211,8 @@
             surface inspired by common cuttlefish, with a pale backing and localised blue-green
             reflection. Retracted pigments reveal the reflection; expanded pigments dim and
             colour-filter it. Colours approximate neutral daylight (D65); they are illustrative
-            rather than measured. Lighting and viewing angle stay fixed. Switching views keeps the
-            same movement running.
+            rather than measured. Reflection angles can be adjusted; this does not rotate the flat
+            patch. Switching views keeps the same movement running.
           </p>
           <details>
             <summary>How to explore</summary>
@@ -204,7 +232,8 @@
               Keyboard shortcuts work while focus is inside the simulator, except in form inputs.
               Patterns: U, B, H, V, S, M, G. Displays: W, P, F, N, L, T. Expand: E; contract: C;
               randomise: R. Keys 1–3 cycle response settings; 4 cycles display speed. Use the Hold
-              button to stop. Tab navigates normally.
+              button to stop. A cycles viewing angle; I cycles light angle; O resets both. Key 9
+              switches response timing. Tab navigates normally.
             </p>
           </details>
           <p class="model-note">

@@ -3,6 +3,7 @@ import { ChromatophoreField, ResponseParameters, Pigment } from './model.js';
 import { Pattern } from './patterns.js';
 import { DynamicDisplay } from './dynamics.js';
 import { SeededRandom } from './random.js';
+import { ANGLE_PRESETS, ReflectionSettings } from './reflection.js';
 import { NATURAL_REFERENCE_RATE } from './timing.js';
 import { FieldView, ViewMode } from './view.js';
 
@@ -51,6 +52,12 @@ function initialise() {
   const contraction = document.querySelector('#contraction-rate');
   const delay = document.querySelector('#response-delay');
   const timing = document.querySelector('#response-timing');
+  const viewAngle = document.querySelector('#view-angle');
+  const lightAngle = document.querySelector('#light-angle');
+  for (const select of [viewAngle, lightAngle]) {
+    for (const angle of ANGLE_PRESETS) select.add(new Option(`${angle}°`, String(angle)));
+    select.value = '0';
+  }
   expansion.value = String(field.response.expansionRate);
   contraction.value = String(field.response.contractionRate);
   const activity = document.querySelector('#activity');
@@ -114,6 +121,8 @@ function initialise() {
     root.querySelectorAll('[data-pigment]').forEach((select) => {
       select.value = String(field.pigmentLevels[select.dataset.pigment]);
     });
+    viewAngle.value = String(view.reflection.viewAngle);
+    lightAngle.value = String(view.reflection.lightAngle);
     timing.value = field.naturalTiming ? 'natural' : 'uniform';
     speed.disabled = !field.dynamic;
     speed.value = String(field.dynamic?.speed ?? 1);
@@ -123,7 +132,7 @@ function initialise() {
       `${isSkin ? 'Skin' : 'Chromatophore'} View: ${field.targetDescription}, 2,500 pigment organs`,
     );
     document.querySelector('#view-description').textContent = isSkin
-      ? 'Cuttlefish-inspired pigments cover a pale backing with subtle blue-green reflective patches. Expanded pigments dim and colour-filter the reflection.'
+      ? `Reflective patches change colour and brightness with the angles. View ${view.reflection.viewAngle}°; light ${view.reflection.lightAngle}°. Expanded pigments dim and filter the reflection.`
       : 'Each disc is a pigment organ with a fixed position and its own maximum size. Its radius follows the target.';
     if (announcement) status.textContent = announcement;
     view.draw(field);
@@ -139,6 +148,11 @@ function initialise() {
     if (button.dataset.view) {
       view.mode = button.dataset.view;
       refreshControls(`${view.mode} View selected.`);
+      return;
+    }
+    if (button.dataset.reflection === 'reset') {
+      view.reflection = new ReflectionSettings();
+      refreshControls('Viewing and light angles reset to zero degrees.');
       return;
     }
     selectedCommand = button.dataset.command ?? null;
@@ -194,7 +208,16 @@ function initialise() {
     else if (['e', 'c', 'r'].includes(key)) {
       const command = { e: 'expand', c: 'contract', r: 'randomise' }[key];
       button = document.querySelector(`[data-command="${command}"]`);
+    } else if (['a', 'i', 'o'].includes(key)) {
+      if (key === 'o') root.querySelector('[data-reflection="reset"]').click();
+      else {
+        const select = key === 'a' ? viewAngle : lightAngle;
+        select.selectedIndex = (select.selectedIndex + 1) % select.options.length;
+        select.dispatchEvent(new Event('change'));
+      }
     } else if (key === '9') {
+      viewAngle.value = String(view.reflection.viewAngle);
+      lightAngle.value = String(view.reflection.lightAngle);
       timing.value = field.naturalTiming ? 'uniform' : 'natural';
       timing.dispatchEvent(new Event('change'));
     } else if (['1', '2', '3', '4'].includes(key)) {
@@ -261,6 +284,14 @@ function initialise() {
   for (const select of [expansion, contraction, delay])
     select.addEventListener('change', onResponseChange);
   speed.addEventListener('change', onSpeedChange);
+  for (const select of [viewAngle, lightAngle]) {
+    select.addEventListener('change', () => {
+      view.reflection = new ReflectionSettings(Number(viewAngle.value), Number(lightAngle.value));
+      refreshControls(
+        `Viewing angle ${viewAngle.value} degrees; light angle ${lightAngle.value} degrees.`,
+      );
+    });
+  }
   timing.addEventListener('change', () => {
     field.setNaturalTiming(timing.value === 'natural');
     refreshControls(`${field.naturalTiming ? 'Natural' : 'Uniform'} response timing selected.`);

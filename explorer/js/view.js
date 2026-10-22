@@ -1,12 +1,18 @@
 /** Canvas rendering reads state only; drawing never changes targets or time. */
 import { circleRectangleArea } from './coverage.js';
 import { Pigment } from './model.js';
+import {
+  ReflectionSettings,
+  reflectionResponses,
+  DEFAULT_REFLECTION_RESPONSES,
+  REFERENCE_REFLECTION_COLOUR,
+} from './reflection.js';
 
 export const LOGICAL_SIZE = 550;
 export const SKIN_COLOUR = Object.freeze([235, 232, 220]);
 // Common cuttlefish-inspired sRGB palette, with neutral daylight (D65) as the target.
 // Illustrative colours rather than measured reflectance; Black represents dark brown.
-export const IRIDOPHORE_COLOUR = Object.freeze([126, 179, 205]);
+export const IRIDOPHORE_COLOUR = REFERENCE_REFLECTION_COLOUR;
 export const IRIDOPHORE_STRENGTH = 0.28;
 
 // Illustrative mantle patches, not an anatomical map. Coordinates are normalised.
@@ -16,14 +22,38 @@ export const IRIDOPHORE_PATCHES = Object.freeze([
   Object.freeze([0.48, 0.78, 0.22, 0.12]),
 ]);
 
-export function iridophoreBase(strength = IRIDOPHORE_STRENGTH, x = 0.5, y = 0.5) {
-  const patch = Math.max(
-    ...IRIDOPHORE_PATCHES.map(([cx, cy, rx, ry]) =>
-      Math.exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)),
-    ),
+/**
+ * Mix the strongest local reflective patch into the backing before pigment filtering.
+ * @param {number} strength - Reference reflection fraction in [0, 1].
+ * @param {number} x - Normalised horizontal position in [0, 1].
+ * @param {number} y - Normalised vertical position in [0, 1].
+ * @param {ReadonlyArray<object>} angularResponses - Precomputed response for each patch.
+ * @returns {number[]} Three integer sRGB channels.
+ * @throws {RangeError} If coordinates, strength or response count are invalid.
+ */
+export function iridophoreBase(
+  strength = IRIDOPHORE_STRENGTH,
+  x = 0.5,
+  y = 0.5,
+  angularResponses = DEFAULT_REFLECTION_RESPONSES,
+) {
+  if (
+    ![strength, x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1) ||
+    angularResponses.length !== IRIDOPHORE_PATCHES.length
+  )
+    throw new RangeError('Invalid reflection strength, position or response count');
+  const contributions = IRIDOPHORE_PATCHES.map(
+    ([cx, cy, rx, ry], index) =>
+      Math.exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)) *
+      angularResponses[index].strength,
   );
+  let index = 0;
+  for (let candidate = 1; candidate < contributions.length; candidate++) {
+    if (contributions[candidate] > contributions[index]) index = candidate;
+  }
+  const amount = Math.max(0, Math.min(1, strength * contributions[index]));
   return SKIN_COLOUR.map((base, channel) =>
-    roundEven(base + strength * patch * (IRIDOPHORE_COLOUR[channel] - base)),
+    roundEven(base + amount * (angularResponses[index].colour[channel] - base)),
   );
 }
 export const PIGMENT_COLOURS = Object.freeze({
@@ -91,10 +121,12 @@ export function pigmentReflections(backing) {
 }
 
 export const MINIMUM_RADIUS = 0.8;
-export const SKIN_SAMPLE_SPAN = 2;
+// Match desktop integration so individual pigment differences do not dominate Skin View.
+export const SKIN_SAMPLE_SPAN = 4;
 export const SKIN_CONTRAST = 2;
 export const SKIN_REFERENCE_RADIUS_RATIO = 0.45;
-export const SKIN_SHARPNESS = 2.0;
+// Gentle presentation sharpening; the pigment and structural-reflection model is unchanged.
+export const SKIN_SHARPNESS = 0.4;
 export const ViewMode = Object.freeze({ CHROMATOPHORES: 'Chromatophores', SKIN: 'Skin' });
 
 /**
@@ -130,14 +162,22 @@ export function skinCoverageGain(field) {
  * Calculate area-weighted skin samples without reducing a raster of circles.
  * @param {import('./model.js').ChromatophoreField} field - State to display.
  * @param {Uint8ClampedArray} [pixels] - Optional reusable RGBA destination.
+ * @param {number} iridophoreStrength - Reference structural reflection fraction.
+ * @param {ReflectionSettings} reflection - Validated camera/light directions.
  * @returns {{width: number, height: number, pixels: Uint8ClampedArray}} Sample image.
  */
-export function skinSamples(field, pixels, iridophoreStrength = IRIDOPHORE_STRENGTH) {
+export function skinSamples(
+  field,
+  pixels,
+  iridophoreStrength = IRIDOPHORE_STRENGTH,
+  reflection = new ReflectionSettings(),
+) {
   const width = Math.ceil(field.columns / SKIN_SAMPLE_SPAN);
   const height = Math.ceil(field.rows / SKIN_SAMPLE_SPAN);
   const destination = pixels ?? new Uint8ClampedArray(width * height * 4);
   const spacing = LOGICAL_SIZE / Math.max(field.rows, field.columns);
   const coverageGain = skinCoverageGain(field);
+  const angularResponses = reflectionResponses(reflection);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const left = x * SKIN_SAMPLE_SPAN;
@@ -148,6 +188,7 @@ export function skinSamples(field, pixels, iridophoreStrength = IRIDOPHORE_STREN
         iridophoreStrength,
         (left + right) / (2 * field.columns),
         (top + bottom) / (2 * field.rows),
+        angularResponses,
       ).map(srgbToLinear);
       const reflections = pigmentReflections(base);
       const areas = Object.fromEntries(Object.values(Pigment).map((pigment) => [pigment, 0]));
@@ -230,6 +271,7 @@ export class FieldView {
     this.sampleContext = this.samples.getContext('2d', { alpha: false });
     if (!this.context || !this.sampleContext) throw new Error('Canvas 2D is unavailable');
     this.mode = ViewMode.CHROMATOPHORES;
+    this.reflection = new ReflectionSettings();
     this.sampleImage = null;
   }
 
@@ -293,7 +335,7 @@ export class FieldView {
       this.samples.height = height;
       this.sampleImage = this.sampleContext.createImageData(width, height);
     }
-    skinSamples(field, this.sampleImage.data);
+    skinSamples(field, this.sampleImage.data, IRIDOPHORE_STRENGTH, this.reflection);
     // Sharpen after pigment integration, before interpolation, so no disc grid returns.
     sharpenSkin(this.sampleImage.data, width, height);
     this.sampleContext.putImageData(this.sampleImage, 0, 0);

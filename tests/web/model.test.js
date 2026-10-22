@@ -1,3 +1,4 @@
+import { ReflectionSettings, reflectionResponses } from '../../explorer/js/reflection.js';
 /** Behavioural checks of the port, including comparisons to live Python outputs. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -170,14 +171,14 @@ test('skin samples preserve irregular state and integrate odd edges', () => {
   field.update(2);
   const before = JSON.stringify(field);
   const { pixels, width, height } = skinSamples(field, undefined, 0);
-  assert.equal(width, 25);
-  assert.equal(height, 25);
+  assert.equal(width, 13);
+  assert.equal(height, 13);
   assert.ok(new Set(pixels).size > 4, 'Irregular geometry produces natural colour variation');
   for (let offset = 3; offset < pixels.length; offset += 4) assert.equal(pixels[offset], 255);
   assert.equal(JSON.stringify(field), before);
   const odd = skinSamples(new ChromatophoreField(3, 5));
-  assert.equal(odd.width, 3);
-  assert.equal(odd.height, 2);
+  assert.equal(odd.width, 2);
+  assert.equal(odd.height, 1);
   assert.ok(odd.pixels.every(Number.isFinite));
   assert.deepEqual([roundEven(2.5), roundEven(3.5), roundEven(-1.5)], [2, 4, -2]);
   assert.ok(pixels[0] < SKIN_COLOUR[0]);
@@ -237,6 +238,11 @@ test('static targets, all deterministic signals and delayed state traces match P
       close([organ.x, organ.y, organ.radiusRatio, organ.pigmentIndex], layout.geometry[index]),
     );
   }
+  for (const angular of reference.angular) {
+    reflectionResponses(new ReflectionSettings(angular.view, angular.light)).forEach(
+      (response, index) => close([...response.colour, response.strength], angular.responses[index]),
+    );
+  }
   for (const sample of reference.patterns) {
     close(generateTargets(sample.pattern, sample.rows, sample.columns), sample.targets);
   }
@@ -250,8 +256,13 @@ test('static targets, all deterministic signals and delayed state traces match P
     const field = new ChromatophoreField(sample.rows, sample.columns);
     field.setExpansion(sample.expansion);
     field.update(4);
-    const skin = skinSamples(field);
-    assert.deepEqual([...sharpenSkin(skin.pixels, skin.width, skin.height)], sample.pixels);
+    const skin = skinSamples(
+      field,
+      undefined,
+      undefined,
+      new ReflectionSettings(sample.view_angle, sample.light_angle),
+    );
+    assert.deepEqual([...skin.pixels], sample.pixels);
   }
   for (const trace of reference.traces) {
     const field = new ChromatophoreField(5, 7, new ResponseParameters(0.5, 0.25, 0.5));
