@@ -8,7 +8,7 @@
       content="Explore cephalopod colour change through 2,500 simulated pigment organs. Try patterns, waves and two views of the same living surface."
     />
     <title>Chromatophore Simulator · Field Notes</title>
-    <link rel="icon" href="assets/octopus.png" type="image/png" />
+    <link rel="icon" href="assets/cuttlefish.png" type="image/png" />
     <link rel="stylesheet" href="css/simulator.css" />
     <script type="module" src="js/app.js"></script>
   </head>
@@ -16,7 +16,7 @@
     <main id="simulator" aria-labelledby="page-title">
       <header class="page-header">
         <div class="brand">
-          <img src="assets/octopus.png" width="52" height="52" alt="" />
+          <img src="assets/cuttlefish.png" width="52" height="52" alt="" />
           <div>
             <p class="eyebrow">FIELD NOTES / INTERACTIVE EXPLORER</p>
             <h1 id="page-title">Chromatophore Simulator</h1>
@@ -107,24 +107,31 @@
             </section>
             <section class="control-section">
               <h2>03 <span>Cell response</span></h2>
+              <label class="field" for="response-timing"
+                ><span>Response timing</span>
+                <select id="response-timing">
+                  <option value="natural" selected>Natural</option>
+                  <option value="uniform">Uniform</option>
+                </select>
+              </label>
               <label class="field" for="expansion-rate"
                 ><span>Expansion rate</span
                 ><select id="expansion-rate">
-                  <option value="0.25">0.25 units/s</option>
-                  <option value="0.5">0.5 units/s</option>
-                  <option value="1">1 unit/s</option>
-                  <option value="2">2 units/s</option>
-                  <option value="4">4 units/s</option>
+                  <option value="0.25">0.25 /s</option>
+                  <option value="0.5">0.5 /s</option>
+                  <option value="1">1 /s</option>
+                  <option value="2">2 /s</option>
+                  <option value="4" selected>4 /s</option>
                 </select></label
               >
               <label class="field" for="contraction-rate"
                 ><span>Contraction rate</span
                 ><select id="contraction-rate">
-                  <option value="0.25">0.25 units/s</option>
-                  <option value="0.5">0.5 units/s</option>
-                  <option value="1">1 unit/s</option>
-                  <option value="2">2 units/s</option>
-                  <option value="4">4 units/s</option>
+                  <option value="0.25">0.25 /s</option>
+                  <option value="0.5">0.5 /s</option>
+                  <option value="1">1 /s</option>
+                  <option value="2">2 /s</option>
+                  <option value="4" selected>4 /s</option>
                 </select></label
               >
               <label class="field" for="response-delay"
@@ -138,7 +145,10 @@
                 </select></label
               >
               <p class="hint">
-                At 0.25 units/s, full expansion takes four seconds, plus any delay.
+                Natural timing uses smooth, locally coordinated responses. At the default rate of 4,
+                organs reach about 99% of a change in a quarter-second, with small local
+                differences. Uniform timing uses constant-speed motion. Lower rates slow either
+                mode; response delay is additional.
               </p>
             </section>
             <section class="control-section">

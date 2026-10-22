@@ -3,6 +3,7 @@ import { ChromatophoreField, ResponseParameters, Pigment } from './model.js';
 import { Pattern } from './patterns.js';
 import { DynamicDisplay } from './dynamics.js';
 import { SeededRandom } from './random.js';
+import { NATURAL_REFERENCE_RATE } from './timing.js';
 import { FieldView, ViewMode } from './view.js';
 
 export const MAXIMUM_FRAME_SECONDS = 0.1;
@@ -36,7 +37,12 @@ function addButtons(container, values, kind, shortcuts) {
 function initialise() {
   const root = document.querySelector('#simulator');
   const canvas = document.querySelector('#field');
-  const field = new ChromatophoreField();
+  const field = new ChromatophoreField(
+    50,
+    50,
+    new ResponseParameters(NATURAL_REFERENCE_RATE, NATURAL_REFERENCE_RATE),
+  );
+  field.setNaturalTiming(true);
   const view = new FieldView(canvas);
   const source = new SeededRandom(crypto.getRandomValues(new Uint32Array(1))[0]);
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -44,6 +50,9 @@ function initialise() {
   const expansion = document.querySelector('#expansion-rate');
   const contraction = document.querySelector('#contraction-rate');
   const delay = document.querySelector('#response-delay');
+  const timing = document.querySelector('#response-timing');
+  expansion.value = String(field.response.expansionRate);
+  contraction.value = String(field.response.contractionRate);
   const activity = document.querySelector('#activity');
   const status = document.querySelector('#status');
   let selectedCommand = null;
@@ -105,6 +114,7 @@ function initialise() {
     root.querySelectorAll('[data-pigment]').forEach((select) => {
       select.value = String(field.pigmentLevels[select.dataset.pigment]);
     });
+    timing.value = field.naturalTiming ? 'natural' : 'uniform';
     speed.disabled = !field.dynamic;
     speed.value = String(field.dynamic?.speed ?? 1);
     const isSkin = view.mode === ViewMode.SKIN;
@@ -152,7 +162,7 @@ function initialise() {
       Number(contraction.value),
       Number(delay.value),
     );
-    status.textContent = `Expansion ${expansion.value} units per second; contraction ${contraction.value} units per second; delay ${delay.value} seconds.`;
+    status.textContent = `Expansion ${expansion.value} per second; contraction ${contraction.value} per second; delay ${delay.value} seconds.`;
   }
 
   /** Change display speed without changing phase or forgetting its history. */
@@ -184,6 +194,9 @@ function initialise() {
     else if (['e', 'c', 'r'].includes(key)) {
       const command = { e: 'expand', c: 'contract', r: 'randomise' }[key];
       button = document.querySelector(`[data-command="${command}"]`);
+    } else if (key === '9') {
+      timing.value = field.naturalTiming ? 'uniform' : 'natural';
+      timing.dispatchEvent(new Event('change'));
     } else if (['1', '2', '3', '4'].includes(key)) {
       const select = [expansion, contraction, delay, speed][Number(key) - 1];
       if (!select.disabled) {
@@ -248,6 +261,10 @@ function initialise() {
   for (const select of [expansion, contraction, delay])
     select.addEventListener('change', onResponseChange);
   speed.addEventListener('change', onSpeedChange);
+  timing.addEventListener('change', () => {
+    field.setNaturalTiming(timing.value === 'natural');
+    refreshControls(`${field.naturalTiming ? 'Natural' : 'Uniform'} response timing selected.`);
+  });
   document.addEventListener('visibilitychange', onVisibilityChange);
   reducedMotion.addEventListener('change', onMotionPreferenceChange);
   document.querySelector('#controls').disabled = false;

@@ -227,6 +227,12 @@ test('static targets, all deterministic signals and delayed state traces match P
       new ResponseParameters(),
       layout.seed,
     );
+    field.responseProfiles.forEach((profile, index) =>
+      close(
+        [...profile.groupId, profile.expansionScale, profile.contractionScale],
+        layout.timing[index],
+      ),
+    );
     field.geometry.forEach((organ, index) =>
       close([organ.x, organ.y, organ.radiusRatio, organ.pigmentIndex], layout.geometry[index]),
     );
@@ -252,6 +258,7 @@ test('static targets, all deterministic signals and delayed state traces match P
     field.applyPattern(Pattern.SPOTS);
     field.update(0.75);
     field.startDynamic(trace.display);
+    field.setNaturalTiming(true);
     for (let step = 0; step < 200; step++) {
       if (step === 30) field.dynamic.speed = 2;
       if (step === 80) field.response = new ResponseParameters(2, 0.5, 2);
@@ -260,6 +267,8 @@ test('static targets, all deterministic signals and delayed state traces match P
         field.setPigmentLevel(Pigment.BROWN, 0.5);
         field.setPigmentLevel(Pigment.BLACK, 0);
       }
+      if (step === 120) field.setNaturalTiming(false);
+      if (step === 150) field.setNaturalTiming(true);
       if (step === 140) field.dynamic.speed = 0.5;
       field.update([0.01, 0.04, 0.025, 0.1][step % 4]);
     }

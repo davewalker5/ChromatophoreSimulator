@@ -2,13 +2,18 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from math import isfinite
+from math import exp, isfinite
 from random import Random
 from types import MappingProxyType
 
 from chromatophore_simulator.dynamics import DYNAMIC_STEP, DynamicController, DynamicDisplay
 from chromatophore_simulator.morphology import DEFAULT_LAYOUT_SEED, generate_layout
 from chromatophore_simulator.patterns import Pattern, generate_targets
+from chromatophore_simulator.timing import (
+    NATURAL_SETTLING_FACTOR,
+    NATURAL_SETTLING_THRESHOLD,
+    generate_response_profiles,
+)
 
 DEFAULT_ROWS = 50
 DEFAULT_COLUMNS = 50
@@ -35,7 +40,7 @@ def _validate_time(value: float) -> None:
 
 @dataclass(frozen=True, slots=True)
 class ResponseParameters:
-    """Rates in expansion units per second and delay in simulation seconds."""
+    """Base rates in 1/s and delay in seconds; uniform rates are expansion units/s."""
 
     # Increase in expansion per simulation second while moving towards a larger target.
     # Expansion spans 0 to 1, so 0.25/s takes four seconds for a full expansion.
@@ -108,17 +113,27 @@ class Chromatophore:
         self.target_expansion = expansion
         self._delay_remaining = response_delay if expansion != self.expansion else 0.0
 
-    def update(self, elapsed_seconds: float, response: ResponseParameters) -> None:
+    def update(
+        self,
+        elapsed_seconds: float,
+        response: ResponseParameters,
+        rate_scale: float = 1.0,
+        natural_timing: bool = False,
+    ) -> None:
         """Wait out latency, then move towards the target without overshooting.
 
         A changed target holds the current size during its delay. Repeated targets
         do not restart that delay. Rate changes affect the next movement update.
 
         :param elapsed_seconds: Finite, non-negative simulation time to advance.
-        :param response: Separate expansion and contraction rates.
-        :raises ValueError: If elapsed time is invalid.
+        :param response: Base rates; natural mode reaches 99% of a step in 1/rate seconds.
+        :param rate_scale: Positive dimensionless local timing multiplier.
+        :param natural_timing: Use exponential settling rather than constant-speed motion.
+        :raises ValueError: If elapsed time, scale or timing mode is invalid.
         """
         _validate_time(elapsed_seconds)
+        if not isfinite(rate_scale) or rate_scale <= 0 or type(natural_timing) is not bool:
+            raise ValueError("Rate scale must be positive and timing mode must be boolean")
 
         # Consume the waiting portion first, without letting the countdown go negative.
         # If the delay expires partway through this update, only the leftover time
@@ -132,10 +147,22 @@ class Chromatophore:
         difference = self.target_expansion - self.expansion
         rate = response.expansion_rate if difference > 0 else response.contraction_rate
 
-        # Rate is measured in expansion units per second, so multiplying by seconds
-        # gives this update's allowed change. At 0.25/s, 0.02 s allows a change of 0.005.
-        # Using elapsed time rather than a fixed step keeps speed independent of FPS.
-        maximum_change = rate * moving_seconds
+        # Natural motion integrates exponential settling exactly for this target.
+        # Uniform mode instead limits travel by rate × elapsed seconds. Neither
+        # curve depends on the rendering frame rate; dynamic targets use fixed steps.
+        if natural_timing:
+            if moving_seconds <= 0:
+                return
+            remaining = difference * exp(
+                -rate * rate_scale * NATURAL_SETTLING_FACTOR * moving_seconds
+            )
+            self.expansion = (
+                self.target_expansion
+                if abs(remaining) <= NATURAL_SETTLING_THRESHOLD
+                else self.target_expansion - remaining
+            )
+            return
+        maximum_change = rate * rate_scale * moving_seconds
 
         # Snap to the target when the remaining distance fits within this step. This
         # prevents overshoot and ensures we finish exactly at the requested expansion.
@@ -178,11 +205,45 @@ class ChromatophoreField:
         self.cells = tuple(
             Chromatophore(pigment=pigments[organ.pigment_index]) for organ in self.geometry
         )
+        self.response_profiles = generate_response_profiles(self.geometry, layout_seed)
+        self._natural_timing = False
         self.target_description = "Contracted"
         self.dynamic: DynamicController | None = None
         self._dynamic_remainder = 0.0
         self._pigment_levels = {pigment: 1.0 for pigment in Pigment}
         self._source_targets = tuple(0.0 for _ in self.cells)
+
+    @property
+    def natural_timing(self) -> bool:
+        """Return whether smooth, locally coordinated timing is enabled."""
+        return self._natural_timing
+
+    def set_natural_timing(self, enabled: bool) -> None:
+        """Switch response kinetics without retargeting cells or resetting signal history.
+
+        Existing rates and delay countdowns remain unchanged, as do held sizes.
+
+        :param enabled: True for smooth local profiles; False for uniform linear motion.
+        :raises ValueError: If enabled is not boolean.
+        """
+        if type(enabled) is not bool:
+            raise ValueError("Natural timing must be boolean")
+        self._natural_timing = enabled
+
+    def _advance_cells(self, elapsed_seconds: float) -> None:
+        """Apply current kinetics to every organ without generating new targets.
+
+        :param elapsed_seconds: Validated non-negative simulation duration.
+        """
+        for cell, profile in zip(self.cells, self.response_profiles, strict=True):
+            scale = 1.0
+            if self._natural_timing:
+                scale = (
+                    profile.expansion_scale
+                    if cell.target_expansion > cell.expansion
+                    else profile.contraction_scale
+                )
+            cell.update(elapsed_seconds, self.response, scale, self._natural_timing)
 
     @property
     def pigment_levels(self) -> MappingProxyType[Pigment, float]:
@@ -306,8 +367,6 @@ class ChromatophoreField:
                 if targets is not None:
                     for cell, target in zip(self.cells, targets, strict=True):
                         cell.set_target(target * self._pigment_levels[cell.pigment], 0.0)
-                for cell in self.cells:
-                    cell.update(DYNAMIC_STEP, self.response)
+                self._advance_cells(DYNAMIC_STEP)
             return
-        for cell in self.cells:
-            cell.update(elapsed_seconds, self.response)
+        self._advance_cells(elapsed_seconds)

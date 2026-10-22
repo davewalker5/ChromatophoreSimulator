@@ -42,6 +42,9 @@ try {
   watch(page);
   await page.goto(url);
   await page.waitForFunction(() => !document.querySelector('#controls').disabled);
+  assert.equal(await page.locator('#response-timing').inputValue(), 'natural');
+  assert.equal(await page.locator('#expansion-rate').inputValue(), '4');
+  assert.equal(await page.locator('#contraction-rate').inputValue(), '4');
   assert.equal(await page.locator('[data-pigment]').count(), 4);
   await page.locator('#pigment-yellow').selectOption('0.25');
   assert.equal(await page.locator('#pigment-red').inputValue(), '1');
@@ -49,6 +52,11 @@ try {
   assert.equal(await page.locator('#pigment-yellow').inputValue(), '1');
   // Group edits can start movement even when initial reduced-motion state was settled.
   await page.getByRole('button', { name: 'Hold current sizes' }).click();
+  await page.locator('#field').focus();
+  await page.keyboard.press('9');
+  assert.equal(await page.locator('#response-timing').inputValue(), 'uniform');
+  await page.keyboard.press('9');
+  assert.equal(await page.locator('#response-timing').inputValue(), 'natural');
   const initial = await canvasImage(page);
   await page.waitForTimeout(150);
   assert.equal(await canvasImage(page), initial, 'Reduced motion must start settled');
@@ -72,6 +80,10 @@ try {
     assert.equal(await page.locator('#display-speed').inputValue(), '1');
     await page.locator('#display-speed').selectOption('2');
   }
+  await page.locator('#response-timing').selectOption('uniform');
+  assert.equal(await page.locator('#current-pattern').textContent(), 'Changing mottle');
+  assert.equal(await page.locator('#display-speed').inputValue(), '2');
+  await page.locator('#response-timing').selectOption('natural');
   await page.locator('#pigment-yellow').selectOption('0.25');
   assert.equal(await page.locator('#current-pattern').textContent(), 'Changing mottle');
   assert.equal(await page.locator('#display-speed').inputValue(), '2');

@@ -458,3 +458,25 @@ def test_skin_density_calibration_restores_mottle_colour(
     assert sum(corrected) / len(corrected) < sum(uncalibrated) / len(uncalibrated) - 8
     assert pvariance(corrected) > pvariance(uncalibrated) * 1.5
     assert tuple(astuple(cell) for cell in field.cells) == before
+
+
+@pytest.mark.parametrize("use_mouse", [False, True])
+def test_timing_control_preserves_targets(view: FieldView, use_mouse: bool) -> None:
+    """Both timing-control paths change kinetics without retargeting organs.
+
+    :param view: Headless control layout.
+    :param use_mouse: Use the header button instead of its keyboard shortcut.
+    """
+    field = ChromatophoreField()
+    field.set_expansion(1)
+    before = tuple(astuple(cell) for cell in field.cells)
+    if use_mouse:
+        event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=view.timing_buttons[0].rectangle.center
+        )
+    else:
+        event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_9)
+    assert app.handle_event(event, field, view, Random(1))
+    assert field.natural_timing
+    assert tuple(astuple(cell) for cell in field.cells) == before
+    view.draw(field, 60)

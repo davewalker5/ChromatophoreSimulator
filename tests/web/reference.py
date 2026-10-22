@@ -12,6 +12,7 @@ from chromatophore_simulator.dynamics import DynamicController, DynamicDisplay
 from chromatophore_simulator.model import ChromatophoreField, Pigment, ResponseParameters
 from chromatophore_simulator.morphology import generate_layout
 from chromatophore_simulator.patterns import Pattern, generate_targets
+from chromatophore_simulator.timing import generate_response_profiles
 
 
 def reference_results():
@@ -23,6 +24,12 @@ def reference_results():
                 "rows": rows,
                 "columns": columns,
                 "seed": seed,
+                "timing": [
+                    [*profile.group_id, profile.expansion_scale, profile.contraction_scale]
+                    for profile in generate_response_profiles(
+                        generate_layout(rows, columns, seed), seed
+                    )
+                ],
                 "geometry": [
                     [organ.x, organ.y, organ.radius_ratio, organ.pigment_index]
                     for organ in generate_layout(rows, columns, seed)
@@ -61,6 +68,7 @@ def reference_results():
         field.apply_pattern(Pattern.SPOTS, Random(1))
         field.update(0.75)
         field.start_dynamic(display)
+        field.set_natural_timing(True)
         for step in range(200):
             if step == 30:
                 field.dynamic.speed = 2
@@ -70,6 +78,10 @@ def reference_results():
                 field.set_pigment_level(Pigment.YELLOW, 0.25)
                 field.set_pigment_level(Pigment.BROWN, 0.5)
                 field.set_pigment_level(Pigment.BLACK, 0)
+            if step == 120:
+                field.set_natural_timing(False)
+            if step == 150:
+                field.set_natural_timing(True)
             if step == 140:
                 field.dynamic.speed = 0.5
             field.update([0.01, 0.04, 0.025, 0.1][step % 4])

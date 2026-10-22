@@ -185,6 +185,12 @@ class Command(Enum):
     RESPONSE_DELAY = "Delay [3]"
 
 
+class TimingAction(Enum):
+    """Switch between smooth local kinetics and uniform linear motion."""
+
+    TOGGLE = "Natural timing [9]"
+
+
 class PigmentAction(Enum):
     """Shared controls for the pigment target multipliers."""
 
@@ -202,7 +208,16 @@ class ViewMode(Enum):
 class Button:
     """A clickable command and its screen-space rectangle."""
 
-    command: Command | Pattern | ViewMode | DynamicDisplay | DynamicAction | Pigment | PigmentAction
+    command: (
+        Command
+        | Pattern
+        | ViewMode
+        | DynamicDisplay
+        | DynamicAction
+        | Pigment
+        | PigmentAction
+        | TimingAction
+    )
     rectangle: pygame.Rect
 
 
@@ -219,10 +234,10 @@ class FieldView:
         self.title_font = pygame.font.Font(None, 34)
         # Load and scale once, then reuse the same artwork for every frame. Package
         # resources keep the header working when launched outside the project folder.
-        icon_resource = files("chromatophore_simulator").joinpath("assets/octopus.png")
+        icon_resource = files("chromatophore_simulator").joinpath("assets/cuttlefish.png")
         with icon_resource.open("rb") as icon_file:
             self.header_icon = pygame.transform.smoothscale(
-                pygame.image.load(icon_file, "octopus.png"), HEADER_ICON_SIZE
+                pygame.image.load(icon_file, "cuttlefish.png"), HEADER_ICON_SIZE
             )
         self.mode = ViewMode.CHROMATOPHORES
         self.buttons = tuple(
@@ -247,6 +262,7 @@ class FieldView:
             Button(pigment, pygame.Rect(760 + (index % 2) * 160, 620 + (index // 2) * 42, 150, 36))
             for index, pigment in enumerate(Pigment)
         ) + (Button(PigmentAction.RESET, pygame.Rect(760, 708, 310, 32)),)
+        self.timing_buttons = (Button(TimingAction.TOGGLE, pygame.Rect(490, 44, 240, 30)),)
         self.view_buttons = tuple(
             Button(mode, pygame.Rect(760 + index * 160, 756, 150, 42))
             for index, mode in enumerate(ViewMode)
@@ -268,6 +284,7 @@ class FieldView:
         | DynamicAction
         | Pigment
         | PigmentAction
+        | TimingAction
         | None
     ):
         """Find the button under a mouse position.
@@ -280,6 +297,7 @@ class FieldView:
             *self.pattern_buttons,
             *self.dynamic_buttons,
             *self.view_buttons,
+            *self.timing_buttons,
             *self.pigment_buttons,
         ):
             if button.rectangle.collidepoint(position):
@@ -306,7 +324,7 @@ class FieldView:
         )
         self.surface.blit(subtitle, (HEADER_TEXT_LEFT, 52))
         mode_label = self.font.render(f"View: {self.mode.value}", True, TEXT_COLOUR)
-        self.surface.blit(mode_label, (490, 52))
+        self.surface.blit(mode_label, (490, 18))
         rectangle = pygame.Rect(FIELD_RECT)
         pygame.draw.rect(self.surface, SKIN_COLOUR, rectangle)
 
@@ -360,6 +378,7 @@ class FieldView:
             *self.pattern_buttons,
             *self.dynamic_buttons,
             *self.view_buttons,
+            *self.timing_buttons,
             *self.pigment_buttons,
         ):
             # Hover highlighting is visual feedback only; event handling applies commands.
@@ -370,6 +389,12 @@ class FieldView:
             )
             pygame.draw.rect(self.surface, colour, button.rectangle, border_radius=7)
             label_text = button.command.value
+            if button.command is TimingAction.TOGGLE:
+                label_text += ": on" if field.natural_timing else ": off"
+                if field.natural_timing:
+                    pygame.draw.rect(
+                        self.surface, TEXT_COLOUR, button.rectangle, width=1, border_radius=7
+                    )
             if isinstance(button.command, Pigment):
                 index = tuple(Pigment).index(button.command)
                 label_text += f" [{index + 5}]: {field.pigment_levels[button.command]:.0%}"

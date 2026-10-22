@@ -7,8 +7,9 @@ from random import Random
 import pygame
 
 from chromatophore_simulator.dynamics import DynamicDisplay
-from chromatophore_simulator.model import ChromatophoreField, Pigment
+from chromatophore_simulator.model import ChromatophoreField, Pigment, ResponseParameters
 from chromatophore_simulator.patterns import Pattern
+from chromatophore_simulator.timing import NATURAL_REFERENCE_RATE
 from chromatophore_simulator.view import (
     DYNAMIC_SHORTCUTS,
     PATTERN_SHORTCUTS,
@@ -17,6 +18,7 @@ from chromatophore_simulator.view import (
     DynamicAction,
     FieldView,
     PigmentAction,
+    TimingAction,
     ViewMode,
 )
 
@@ -39,7 +41,13 @@ def _next_preset(current: float, presets: tuple[float, ...]) -> float:
 
 def apply_command(
     field: ChromatophoreField,
-    command: Command | Pattern | DynamicDisplay | DynamicAction | Pigment | PigmentAction,
+    command: Command
+    | Pattern
+    | DynamicDisplay
+    | DynamicAction
+    | Pigment
+    | PigmentAction
+    | TimingAction,
     random_source: Random,
 ) -> None:
     """Apply a global command to the existing population.
@@ -48,6 +56,9 @@ def apply_command(
     :param command: User-selected action.
     :param random_source: Generator used for random targets.
     """
+    if command is TimingAction.TOGGLE:
+        field.set_natural_timing(not field.natural_timing)
+        return
     if isinstance(command, Pigment):
         field.set_pigment_level(
             command, _next_preset(field.pigment_levels[command], PIGMENT_LEVEL_PRESETS)
@@ -130,6 +141,7 @@ def handle_event(
             pygame.K_7: Pigment.BROWN,
             pygame.K_8: Pigment.BLACK,
             pygame.K_0: PigmentAction.RESET,
+            pygame.K_9: TimingAction.TOGGLE,
         }.get(event.key)
         if command is None:
             command = {
@@ -155,10 +167,10 @@ def main() -> None:
 
         # Load the bundled icon through package resources so launching from another
         # working directory (or an installed package) still finds the same artwork.
-        icon_resource = files("chromatophore_simulator").joinpath("assets/octopus.png")
+        icon_resource = files("chromatophore_simulator").joinpath("assets/cuttlefish.png")
         with icon_resource.open("rb") as icon_file:
             # Set before window creation; SDL also uses this for the macOS Dock.
-            pygame.display.set_icon(pygame.image.load(icon_file, "octopus.png"))
+            pygame.display.set_icon(pygame.image.load(icon_file, "cuttlefish.png"))
 
         # The display surface is the drawing destination shared with the renderer.
         surface = pygame.display.set_mode(WINDOW_SIZE)
@@ -167,7 +179,10 @@ def main() -> None:
         # Keep model state separate from drawing. Both objects persist across frames,
         # so commands change the existing population rather than rebuilding the field.
         view = FieldView(surface)
-        field = ChromatophoreField()
+        field = ChromatophoreField(
+            response=ResponseParameters(NATURAL_REFERENCE_RATE, NATURAL_REFERENCE_RATE)
+        )
+        field.set_natural_timing(True)
         random_source = Random()
 
         # Randomise targets, not current sizes: the initially contracted cells animate
