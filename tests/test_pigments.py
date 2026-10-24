@@ -22,19 +22,16 @@ def test_default_field_has_equal_pigment_populations() -> None:
     assert len({id(cell) for cell in field.cells}) == 2500
 
 
-def test_odd_width_field_preserves_spatial_tile() -> None:
-    """Pigment placement repeats in two dimensions rather than following flat indices."""
+def test_odd_width_field_has_balanced_shuffled_pigments() -> None:
+    """Odd shapes retain all classes without repeating a two-dimensional tile."""
     field = ChromatophoreField(3, 3)
-    assert tuple(cell.pigment for cell in field.cells) == (
-        Pigment.YELLOW,
-        Pigment.RED,
-        Pigment.YELLOW,
-        Pigment.BROWN,
-        Pigment.BLACK,
-        Pigment.BROWN,
-        Pigment.YELLOW,
-        Pigment.RED,
-        Pigment.YELLOW,
+    counts = Counter(cell.pigment for cell in field.cells)
+    assert set(counts) == set(Pigment)
+    assert max(counts.values()) - min(counts.values()) <= 1
+    assert tuple(cell.pigment for cell in field.cells) != tuple(
+        ((Pigment.YELLOW, Pigment.RED), (Pigment.BROWN, Pigment.BLACK))[row % 2][column % 2]
+        for row in range(3)
+        for column in range(3)
     )
 
 

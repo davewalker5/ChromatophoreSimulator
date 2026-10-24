@@ -1,45 +1,35 @@
-"""Pygame rendering and control layout; drawing never changes simulation state."""
+"""Coordinate desktop presentation, controls and field layout.
+
+This view owns button geometry, hit testing, labels and mode selection. It passes
+read-only field state and display coordinates to the dedicated chromatophore and
+skin renderers. Application commands are still executed by app.py.
+"""
 
 from dataclasses import dataclass
 from enum import Enum
 from importlib.resources import files
-from math import pi
-from types import MappingProxyType
 
 import pygame
 
+from chromatophore_simulator.chromatophore_renderer import PIGMENT_COLOURS, draw_chromatophores
 from chromatophore_simulator.dynamics import DynamicDisplay
 from chromatophore_simulator.model import ChromatophoreField, Pigment
 from chromatophore_simulator.patterns import Pattern
+from chromatophore_simulator.reflection import ReflectionSettings
+from chromatophore_simulator.skin_renderer import SKIN_COLOUR, draw_skin
 
 WINDOW_SIZE = (1100, 820)
 FIELD_RECT = (30, 82, 700, 550)
+FIELD_CONTROL_TOP = 651
+FIELD_CONTROL_BUTTON_SIZE = (220, 40)
+FIELD_CONTROL_ROW_SPACING = 50
 HEADER_ICON_SIZE = (64, 64)
 HEADER_ICON_POSITION = (24, 10)
 HEADER_TEXT_LEFT = 102
 BACKGROUND = (24, 32, 37)
-SKIN_COLOUR = (236, 220, 190)
-
-# A clarity-first palette, rather than a physiological colour model. Keep it in
-# the view so pigment identity and simulation behaviour do not depend on RGB values.
-PIGMENT_COLOURS = MappingProxyType(
-    {
-        Pigment.YELLOW: (213, 158, 24),
-        Pigment.RED: (190, 48, 43),
-        Pigment.BROWN: (104, 49, 31),
-        Pigment.BLACK: (30, 27, 26),
-    }
-)
-
 TEXT_COLOUR = (239, 236, 226)
 BUTTON_COLOUR = (53, 72, 80)
 HOVER_COLOUR = (72, 99, 107)
-MINIMUM_RADIUS = 0.8
-RADIUS_SPACING_RATIO = 0.45
-SKIN_SAMPLE_SPAN = 4  # Integrate roughly one 2 × 2 pigment tile per low-resolution sample.
-SKIN_CONTRAST = 2.0  # Amplify pigment contrast against bare skin; 1.0 restores raw averaging.
-SKIN_SHARPNESS = 1.2  # Unsharp mask strength on the integrated pigment image.
-
 PATTERN_SHORTCUTS = (
     (Pattern.UNIFORM, "U"),
     (Pattern.CHECKERBOARD, "B"),
@@ -79,6 +69,26 @@ class Command(Enum):
     RESPONSE_DELAY = "Delay [3]"
 
 
+class ReflectionAction(Enum):
+    """Presentation-only controls for camera and illumination directions."""
+
+    VIEW = "View angle [A]"
+    LIGHT = "Light angle [I]"
+    RESET = "Reset angles [O]"
+
+
+class TimingAction(Enum):
+    """Switch between smooth local kinetics and uniform linear motion."""
+
+    TOGGLE = "Natural timing [9]"
+
+
+class PigmentAction(Enum):
+    """Shared controls for the pigment target multipliers."""
+
+    RESET = "Reset pigment levels [0]"
+
+
 class ViewMode(Enum):
     """Two presentations of the same live simulation state."""
 
@@ -90,7 +100,17 @@ class ViewMode(Enum):
 class Button:
     """A clickable command and its screen-space rectangle."""
 
-    command: Command | Pattern | ViewMode | DynamicDisplay | DynamicAction
+    command: (
+        Command
+        | Pattern
+        | ViewMode
+        | DynamicDisplay
+        | DynamicAction
+        | Pigment
+        | PigmentAction
+        | TimingAction
+        | ReflectionAction
+    )
     rectangle: pygame.Rect
 
 
@@ -107,16 +127,23 @@ class FieldView:
         self.title_font = pygame.font.Font(None, 34)
         # Load and scale once, then reuse the same artwork for every frame. Package
         # resources keep the header working when launched outside the project folder.
-        icon_resource = files("chromatophore_simulator").joinpath("assets/octopus.png")
+        icon_resource = files("chromatophore_simulator").joinpath("assets/cuttlefish.png")
         with icon_resource.open("rb") as icon_file:
             self.header_icon = pygame.transform.smoothscale(
-                pygame.image.load(icon_file, "octopus.png"), HEADER_ICON_SIZE
+                pygame.image.load(icon_file, "cuttlefish.png"), HEADER_ICON_SIZE
             )
         self.mode = ViewMode.CHROMATOPHORES
+        self.reflection = ReflectionSettings()
         self.buttons = tuple(
             Button(
                 command,
-                pygame.Rect(30 + (index % 3) * 240, 651 + (index // 3) * 58, 220, 48),
+                pygame.Rect(
+                    (
+                        30 + (index % 3) * 240,
+                        FIELD_CONTROL_TOP + (index // 3) * FIELD_CONTROL_ROW_SPACING,
+                    ),
+                    FIELD_CONTROL_BUTTON_SIZE,
+                ),
             )
             for index, command in enumerate(Command)
         )
@@ -131,6 +158,21 @@ class FieldView:
             Button(DynamicAction.HOLD, pygame.Rect(760, 485, 150, 36)),
             Button(DynamicAction.SPEED, pygame.Rect(920, 485, 150, 36)),
         )
+        self.pigment_buttons = tuple(
+            Button(pigment, pygame.Rect(760 + (index % 2) * 160, 620 + (index // 2) * 42, 150, 36))
+            for index, pigment in enumerate(Pigment)
+        ) + (Button(PigmentAction.RESET, pygame.Rect(760, 708, 310, 32)),)
+        self.reflection_buttons = tuple(
+            Button(
+                action,
+                pygame.Rect(
+                    (30 + index * 240, FIELD_CONTROL_TOP + 2 * FIELD_CONTROL_ROW_SPACING),
+                    FIELD_CONTROL_BUTTON_SIZE,
+                ),
+            )
+            for index, action in enumerate(ReflectionAction)
+        )
+        self.timing_buttons = (Button(TimingAction.TOGGLE, pygame.Rect(490, 44, 240, 30)),)
         self.view_buttons = tuple(
             Button(mode, pygame.Rect(760 + index * 160, 756, 150, 42))
             for index, mode in enumerate(ViewMode)
@@ -144,7 +186,18 @@ class FieldView:
 
     def command_at(
         self, position: tuple[int, int]
-    ) -> Command | Pattern | ViewMode | DynamicDisplay | DynamicAction | None:
+    ) -> (
+        Command
+        | Pattern
+        | ViewMode
+        | DynamicDisplay
+        | DynamicAction
+        | Pigment
+        | PigmentAction
+        | TimingAction
+        | ReflectionAction
+        | None
+    ):
         """Find the button under a mouse position.
 
         :param position: Window coordinates in pixels, measured from top left.
@@ -155,6 +208,9 @@ class FieldView:
             *self.pattern_buttons,
             *self.dynamic_buttons,
             *self.view_buttons,
+            *self.timing_buttons,
+            *self.reflection_buttons,
+            *self.pigment_buttons,
         ):
             if button.rectangle.collidepoint(position):
                 return button.command
@@ -180,7 +236,7 @@ class FieldView:
         )
         self.surface.blit(subtitle, (HEADER_TEXT_LEFT, 52))
         mode_label = self.font.render(f"View: {self.mode.value}", True, TEXT_COLOUR)
-        self.surface.blit(mode_label, (490, 52))
+        self.surface.blit(mode_label, (490, 18))
         rectangle = pygame.Rect(FIELD_RECT)
         pygame.draw.rect(self.surface, SKIN_COLOUR, rectangle)
 
@@ -188,29 +244,10 @@ class FieldView:
         # entire grid fits, even when the field and the skin patch have different shapes.
         spacing = min(rectangle.width / field.columns, rectangle.height / field.rows)
 
-        # Keep expanded neighbours separated. Contracted cells retain a small dot,
-        # capped at the maximum radius so very dense grids cannot invert the size range.
-        maximum_radius = spacing * RADIUS_SPACING_RATIO
-        minimum_radius = min(MINIMUM_RADIUS, maximum_radius)
-
         # Centre a square-spaced grid within the available rectangular skin patch.
         left = rectangle.centerx - field.columns * spacing / 2
         top = rectangle.centery - field.rows * spacing / 2
-        for index, cell in enumerate(field.cells):
-            # Cells are stored row by row. The half-spacing offset places each disc
-            # in the middle of its grid slot rather than on the slot's upper-left edge.
-            row, column = divmod(index, field.columns)
-            centre = (left + (column + 0.5) * spacing, top + (row + 0.5) * spacing)
-
-            # Map expansion [0, 1] linearly onto the visible radius range. This makes
-            # radius, not area, proportional to expansion: area grows with radius squared.
-            # Read the current animated state; targets and timing belong to the model.
-            radius = minimum_radius + cell.expansion * (maximum_radius - minimum_radius)
-
-            # Antialiasing softens pixel edges as the radius changes by fractional pixels.
-            # Each organ keeps its own pigment; the field's appearance comes from
-            # the visible areas of these differently coloured discs together.
-            pygame.draw.aacircle(self.surface, PIGMENT_COLOURS[cell.pigment], centre, radius)
+        draw_chromatophores(self.surface, field, left, top, spacing)
 
         if self.mode is ViewMode.SKIN:
             # Integrate only the occupied grid, excluding the decorative skin margins.
@@ -221,7 +258,7 @@ class FieldView:
                 max(1, round(field.columns * spacing)),
                 max(1, round(field.rows * spacing)),
             ).clip(rectangle)
-            self._draw_skin(grid_rectangle, field, spacing)
+            draw_skin(self.surface, grid_rectangle, field, spacing, self.reflection)
 
         heading = self.title_font.render("Patterns", True, TEXT_COLOUR)
         self.surface.blit(heading, (760, 18))
@@ -237,6 +274,9 @@ class FieldView:
             *self.pattern_buttons,
             *self.dynamic_buttons,
             *self.view_buttons,
+            *self.timing_buttons,
+            *self.reflection_buttons,
+            *self.pigment_buttons,
         ):
             # Hover highlighting is visual feedback only; event handling applies commands.
             colour = (
@@ -246,6 +286,26 @@ class FieldView:
             )
             pygame.draw.rect(self.surface, colour, button.rectangle, border_radius=7)
             label_text = button.command.value
+            if button.command is ReflectionAction.VIEW:
+                label_text += f": {self.reflection.view_angle:g}°"
+            elif button.command is ReflectionAction.LIGHT:
+                label_text += f": {self.reflection.light_angle:g}°"
+            if button.command is TimingAction.TOGGLE:
+                label_text += ": on" if field.natural_timing else ": off"
+                if field.natural_timing:
+                    pygame.draw.rect(
+                        self.surface, TEXT_COLOUR, button.rectangle, width=1, border_radius=7
+                    )
+            if isinstance(button.command, Pigment):
+                index = tuple(Pigment).index(button.command)
+                label_text += f" [{index + 5}]: {field.pigment_levels[button.command]:.0%}"
+                pygame.draw.rect(
+                    self.surface,
+                    PIGMENT_COLOURS[button.command],
+                    button.rectangle.inflate(-4, -4).clip(
+                        pygame.Rect(button.rectangle.left + 2, button.rectangle.top + 2, 5, 32)
+                    ),
+                )
             if button.command is self.mode:
                 pygame.draw.rect(
                     self.surface, TEXT_COLOUR, button.rectangle, width=2, border_radius=7
@@ -277,129 +337,17 @@ class FieldView:
 
             # Centre using the rendered text's bounds so different label lengths fit neatly.
             self.surface.blit(label, label.get_rect(center=button.rectangle.center))
-        hint = self.font.render(
-            "Click settings to cycle  ·  Delay lags the moving signal"
-            if field.dynamic
-            else "Click settings to cycle  ·  Rates apply now; delay applies to new targets",
-            True,
-            TEXT_COLOUR,
-        )
-        self.surface.blit(hint, (30, 769))
         exit_hint = self.font.render(
-            "Keys: E / C / R and 1 / 2 / 3   ·   Tab: switch view   ·   Esc: exit",
+            "A / I: angles  ·  O: reset angles  ·  Tab: switch view  ·  Esc: exit",
             True,
             TEXT_COLOUR,
         )
-        self.surface.blit(exit_hint, (30, 794))
+        self.surface.blit(exit_hint, (30, FIELD_CONTROL_TOP + 3 * FIELD_CONTROL_ROW_SPACING))
         self._draw_pigment_legend()
 
-    def _draw_skin(self, rectangle: pygame.Rect, field: ChromatophoreField, spacing: float) -> None:
-        """Integrate pigment coverage directly, avoiding pixel-grid sampling artefacts.
-
-        :param rectangle: Occupied grid bounds in the display surface, in pixels.
-        :param field: Current cell states, read without mutation.
-        :param spacing: Distance between cell centres in the detailed view, in pixels.
-        """
-        sample_size = (
-            max(1, (field.columns + SKIN_SAMPLE_SPAN - 1) // SKIN_SAMPLE_SPAN),
-            max(1, (field.rows + SKIN_SAMPLE_SPAN - 1) // SKIN_SAMPLE_SPAN),
-        )
-
-        samples = pygame.Surface(sample_size)
-        maximum_radius = spacing * RADIUS_SPACING_RATIO
-        minimum_radius = min(MINIMUM_RADIUS, maximum_radius)
-
-        for sample_y in range(sample_size[1]):
-            for sample_x in range(sample_size[0]):
-                totals = [0.0, 0.0, 0.0]
-                count = 0
-
-                # Integrate complete cell slots rather than shrinking a raster image.
-                # Raster resampling can alternately capture discs and pale gaps, creating
-                # a false grid. Exact circle area is independent of pixel alignment.
-                for row in range(
-                    sample_y * SKIN_SAMPLE_SPAN,
-                    min((sample_y + 1) * SKIN_SAMPLE_SPAN, field.rows),
-                ):
-                    for column in range(
-                        sample_x * SKIN_SAMPLE_SPAN,
-                        min((sample_x + 1) * SKIN_SAMPLE_SPAN, field.columns),
-                    ):
-                        cell = field.cells[row * field.columns + column]
-                        radius = minimum_radius + cell.expansion * (maximum_radius - minimum_radius)
-
-                        # Each cell occupies a square slot of side length spacing but its pigment is
-                        # a circle - calculate how much of the square is covered
-                        coverage = pi * (radius / spacing) ** 2
-                        pigment = PIGMENT_COLOURS[cell.pigment]
-
-                        # For each red, green, and blue colour channel mix the pigment with the
-                        # colout for uncovered skin
-                        for channel in range(3):
-                            totals[channel] += (
-                                SKIN_COLOUR[channel] * (1 - coverage) + pigment[channel] * coverage
-                            )
-                        count += 1
-
-                # Average only actual cells, including partial tiles at odd-sized edges.
-                samples.set_at(
-                    (sample_x, sample_y), tuple(round(total / count) for total in totals)
-                )
-
-        # Averaging includes the deliberately wide diagnostic gaps between discs,
-        # which dilutes their colour. Amplify each sample's difference from bare skin
-        # before enlargement: skin + gain * (sample - skin). Bare skin stays unchanged.
-        # A fixed gain avoids brightness pumping as patterns animate; clamp channels
-        # to valid RGB values. Work on the small sample grid to keep this inexpensive.
-        for y in range(samples.get_height()):
-            for x in range(samples.get_width()):
-                colour = samples.get_at((x, y))
-                enhanced = tuple(
-                    max(0, min(255, round(base + SKIN_CONTRAST * (channel - base))))
-                    for channel, base in zip(colour[:3], SKIN_COLOUR, strict=True)
-                )
-                samples.set_at((x, y), enhanced)
-
-        # Sharpen the integrated image rather than the discs. A small unsharp mask
-        # strengthens pattern edges while leaving uniform regions unchanged.
-        source = samples.copy()
-        width, height = sample_size
-        for y in range(height):
-            for x in range(width):
-                colour = source.get_at((x, y))
-                totals = [0, 0, 0]
-                for dy in range(-1, 2):
-                    for dx in range(-1, 2):
-                        neighbour = source.get_at(
-                            (max(0, min(width - 1, x + dx)), max(0, min(height - 1, y + dy)))
-                        )
-                        for channel in range(3):
-                            totals[channel] += neighbour[channel]
-                samples.set_at(
-                    (x, y),
-                    tuple(
-                        max(0, min(255, round(value + SKIN_SHARPNESS * (value - total / 9))))
-                        for value, total in zip(colour[:3], totals, strict=True)
-                    ),
-                )
-
-        # Smooth enlargement blends sample boundaries into a continuous surface. This
-        # is a visual approximation of viewing distance, not a biological optical model.
-        skin = pygame.transform.smoothscale(samples, rectangle.size)
-        self.surface.blit(skin, rectangle)
-
     def _draw_pigment_legend(self) -> None:
-        """Identify the four pigment colours and their alternating arrangement."""
-        heading = self.title_font.render("Pigments", True, TEXT_COLOUR)
-        self.surface.blit(heading, (760, 582))
-        for index, pigment in enumerate(Pigment):
-            # Match the field's 2 × 2 tile in the legend, with named colour swatches.
-            left = 760 + (index % 2) * 155
-            top = 625 + (index // 2) * 42
-            swatch = pygame.Rect(left, top, 26, 26)
-            pygame.draw.rect(self.surface, PIGMENT_COLOURS[pigment], swatch, border_radius=5)
-            pygame.draw.rect(self.surface, TEXT_COLOUR, swatch, width=1, border_radius=5)
-            label = self.font.render(pigment.value, True, TEXT_COLOUR)
-            self.surface.blit(label, (left + 36, top + 4))
-        note = self.font.render("View buttons below · Tab to switch", True, TEXT_COLOUR)
-        self.surface.blit(note, (760, 714))
+        """Label the pigment controls; buttons retain their own colour indicators."""
+        heading = self.title_font.render("Pigment levels", True, TEXT_COLOUR)
+        self.surface.blit(heading, (760, 550))
+        note = self.font.render("Click to cycle target strength", True, TEXT_COLOUR)
+        self.surface.blit(note, (760, 585))

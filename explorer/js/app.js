@@ -1,8 +1,10 @@
 /** Page controls and lifecycle; the model itself knows nothing about the DOM. */
-import { ChromatophoreField, ResponseParameters } from './model.js';
+import { ChromatophoreField, ResponseParameters, Pigment } from './model.js';
 import { Pattern } from './patterns.js';
 import { DynamicDisplay } from './dynamics.js';
 import { SeededRandom } from './random.js';
+import { ANGLE_PRESETS, ReflectionSettings } from './reflection.js';
+import { NATURAL_REFERENCE_RATE } from './timing.js';
 import { FieldView, ViewMode } from './view.js';
 
 export const MAXIMUM_FRAME_SECONDS = 0.1;
@@ -36,7 +38,12 @@ function addButtons(container, values, kind, shortcuts) {
 function initialise() {
   const root = document.querySelector('#simulator');
   const canvas = document.querySelector('#field');
-  const field = new ChromatophoreField();
+  const field = new ChromatophoreField(
+    50,
+    50,
+    new ResponseParameters(NATURAL_REFERENCE_RATE, NATURAL_REFERENCE_RATE),
+  );
+  field.setNaturalTiming(true);
   const view = new FieldView(canvas);
   const source = new SeededRandom(crypto.getRandomValues(new Uint32Array(1))[0]);
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -44,6 +51,15 @@ function initialise() {
   const expansion = document.querySelector('#expansion-rate');
   const contraction = document.querySelector('#contraction-rate');
   const delay = document.querySelector('#response-delay');
+  const timing = document.querySelector('#response-timing');
+  const viewAngle = document.querySelector('#view-angle');
+  const lightAngle = document.querySelector('#light-angle');
+  for (const select of [viewAngle, lightAngle]) {
+    for (const angle of ANGLE_PRESETS) select.add(new Option(`${angle}°`, String(angle)));
+    select.value = '0';
+  }
+  expansion.value = String(field.response.expansionRate);
+  contraction.value = String(field.response.contractionRate);
   const activity = document.querySelector('#activity');
   const status = document.querySelector('#status');
   let selectedCommand = null;
@@ -58,6 +74,27 @@ function initialise() {
     'display',
     DISPLAY_KEYS,
   );
+  const pigmentControls = document.querySelector('#pigment-levels');
+  for (const pigment of Object.values(Pigment)) {
+    const label = document.createElement('label');
+    label.className = 'field';
+    const name = document.createElement('span');
+    name.textContent = pigment;
+    const select = document.createElement('select');
+    select.dataset.pigment = pigment;
+    select.id = `pigment-${pigment.toLowerCase()}`;
+    label.htmlFor = select.id;
+    for (const level of [0, 0.25, 0.5, 0.75, 1]) {
+      select.add(new Option(`${level * 100}%`, String(level)));
+    }
+    label.append(name, select);
+    pigmentControls.append(label);
+    select.addEventListener('change', () => {
+      field.setPigmentLevel(pigment, Number(select.value));
+      selectedCommand = null;
+      refreshControls(`${pigment} target strength ${Number(select.value) * 100} percent.`);
+    });
+  }
   field.applyPattern(Pattern.RANDOM_MOTTLE, source);
   if (reducedMotion.matches) {
     // Start with something meaningful to inspect, but no unsolicited movement.
@@ -81,6 +118,12 @@ function initialise() {
     root.querySelectorAll('[data-view]').forEach((button) => {
       button.setAttribute('aria-pressed', String(button.dataset.view === view.mode));
     });
+    root.querySelectorAll('[data-pigment]').forEach((select) => {
+      select.value = String(field.pigmentLevels[select.dataset.pigment]);
+    });
+    viewAngle.value = String(view.reflection.viewAngle);
+    lightAngle.value = String(view.reflection.lightAngle);
+    timing.value = field.naturalTiming ? 'natural' : 'uniform';
     speed.disabled = !field.dynamic;
     speed.value = String(field.dynamic?.speed ?? 1);
     const isSkin = view.mode === ViewMode.SKIN;
@@ -89,8 +132,8 @@ function initialise() {
       `${isSkin ? 'Skin' : 'Chromatophore'} View: ${field.targetDescription}, 2,500 pigment organs`,
     );
     document.querySelector('#view-description').textContent = isSkin
-      ? 'Pigment coverage is blended into a continuous surface. These are the same cells, seen together.'
-      : 'Each coloured disc is one pigment organ. Its radius changes as it follows a target size.';
+      ? `Reflective patches change colour and brightness with the angles. View ${view.reflection.viewAngle}°; light ${view.reflection.lightAngle}°. Expanded pigments dim and filter the reflection.`
+      : 'Each disc is a pigment organ with a fixed position and its own maximum size. Its radius follows the target.';
     if (announcement) status.textContent = announcement;
     view.draw(field);
   }
@@ -107,6 +150,11 @@ function initialise() {
       refreshControls(`${view.mode} View selected.`);
       return;
     }
+    if (button.dataset.reflection === 'reset') {
+      view.reflection = new ReflectionSettings();
+      refreshControls('Viewing and light angles reset to zero degrees.');
+      return;
+    }
     selectedCommand = button.dataset.command ?? null;
     if (button.dataset.pattern) field.applyPattern(button.dataset.pattern, source);
     else if (button.dataset.display) field.startDynamic(button.dataset.display, source);
@@ -114,6 +162,10 @@ function initialise() {
     else if (selectedCommand === 'contract') field.setExpansion(0);
     else if (selectedCommand === 'randomise') field.randomise(source);
     else if (selectedCommand === 'hold') field.hold();
+    else if (selectedCommand === 'reset-pigments') {
+      field.resetPigmentLevels();
+      selectedCommand = null;
+    }
     refreshControls(`${field.targetDescription} selected.`);
   }
 
@@ -124,7 +176,7 @@ function initialise() {
       Number(contraction.value),
       Number(delay.value),
     );
-    status.textContent = `Expansion ${expansion.value} units per second; contraction ${contraction.value} units per second; delay ${delay.value} seconds.`;
+    status.textContent = `Expansion ${expansion.value} per second; contraction ${contraction.value} per second; delay ${delay.value} seconds.`;
   }
 
   /** Change display speed without changing phase or forgetting its history. */
@@ -156,6 +208,18 @@ function initialise() {
     else if (['e', 'c', 'r'].includes(key)) {
       const command = { e: 'expand', c: 'contract', r: 'randomise' }[key];
       button = document.querySelector(`[data-command="${command}"]`);
+    } else if (['a', 'i', 'o'].includes(key)) {
+      if (key === 'o') root.querySelector('[data-reflection="reset"]').click();
+      else {
+        const select = key === 'a' ? viewAngle : lightAngle;
+        select.selectedIndex = (select.selectedIndex + 1) % select.options.length;
+        select.dispatchEvent(new Event('change'));
+      }
+    } else if (key === '9') {
+      viewAngle.value = String(view.reflection.viewAngle);
+      lightAngle.value = String(view.reflection.lightAngle);
+      timing.value = field.naturalTiming ? 'uniform' : 'natural';
+      timing.dispatchEvent(new Event('change'));
     } else if (['1', '2', '3', '4'].includes(key)) {
       const select = [expansion, contraction, delay, speed][Number(key) - 1];
       if (!select.disabled) {
@@ -220,6 +284,18 @@ function initialise() {
   for (const select of [expansion, contraction, delay])
     select.addEventListener('change', onResponseChange);
   speed.addEventListener('change', onSpeedChange);
+  for (const select of [viewAngle, lightAngle]) {
+    select.addEventListener('change', () => {
+      view.reflection = new ReflectionSettings(Number(viewAngle.value), Number(lightAngle.value));
+      refreshControls(
+        `Viewing angle ${viewAngle.value} degrees; light angle ${lightAngle.value} degrees.`,
+      );
+    });
+  }
+  timing.addEventListener('change', () => {
+    field.setNaturalTiming(timing.value === 'natural');
+    refreshControls(`${field.naturalTiming ? 'Natural' : 'Uniform'} response timing selected.`);
+  });
   document.addEventListener('visibilitychange', onVisibilityChange);
   reducedMotion.addEventListener('change', onMotionPreferenceChange);
   document.querySelector('#controls').disabled = false;

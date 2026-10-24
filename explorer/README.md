@@ -42,14 +42,16 @@ This is an illustrative model, not a physiological reconstruction. Skin View est
 
 ## Source organisation and comments
 
-| Module           | Responsibility                                                |
-| ---------------- | ------------------------------------------------------------- |
-| `js/model.js`    | Pigment identity, response parameters, cells and field state  |
-| `js/patterns.js` | Static target geometry and bilinear mottle interpolation      |
-| `js/dynamics.js` | Dynamic signals, neighbour arrivals and delayed phase history |
-| `js/random.js`   | Explicit seeded generator for repeatable mottles              |
-| `js/view.js`     | Canvas drawing and analytical skin coverage                   |
-| `js/app.js`      | Controls, keyboard handling and animation lifecycle           |
+| Module                         | Responsibility                                                          |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| `js/model.js`                  | Pigment identity, response parameters, cells and field state            |
+| `js/patterns.js`               | Static target geometry and bilinear mottle interpolation                |
+| `js/dynamics.js`               | Dynamic signals, neighbour arrivals and delayed phase history           |
+| `js/random.js`                 | Explicit seeded generator for repeatable mottles                        |
+| `js/chromatophore-renderer.js` | Diagnostic discs, shared pigment palette and logical display units      |
+| `js/skin-renderer.js`          | Skin optics, analytical coverage, sharpening and reusable sample canvas |
+| `js/view.js`                   | Visible canvas sizing, grid layout and renderer coordination            |
+| `js/app.js`                    | Controls, keyboard handling and animation lifecycle                     |
 
 ## Development checks
 

@@ -272,13 +272,50 @@ fieldset {
 }
 .control-section {
   border-top: 1px solid var(--border);
-  padding-top: 20px;
-  margin-top: 20px;
+  padding-top: 10px;
+  margin-top: 10px;
 }
 .control-section.first {
   border: 0;
   margin: 0;
   padding: 0;
+}
+/* Native disclosures preserve keyboard and screen-reader expand/collapse behaviour. */
+.control-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0;
+  list-style: none;
+}
+.control-section > summary::-webkit-details-marker {
+  display: none;
+}
+.control-section > summary::marker {
+  content: '';
+}
+.control-section > summary::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  flex-shrink: 0;
+}
+.control-section[open] > summary::before {
+  transform: rotate(45deg);
+}
+.control-section[open] > summary {
+  margin-bottom: 10px;
+}
+.control-section > summary h2 {
+  display: inline;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
 }
 .control-section h2 {
   font-size: 11px;

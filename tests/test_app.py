@@ -9,12 +9,12 @@ import pygame
 import pytest
 
 from chromatophore_simulator import app
+from chromatophore_simulator.chromatophore_renderer import PIGMENT_COLOURS
 from chromatophore_simulator.model import ChromatophoreField, Pigment, ResponseParameters
 from chromatophore_simulator.patterns import Pattern, generate_targets
 from chromatophore_simulator.view import (
     FIELD_RECT,
     PATTERN_SHORTCUTS,
-    PIGMENT_COLOURS,
     WINDOW_SIZE,
     FieldView,
     ViewMode,
@@ -188,10 +188,9 @@ def test_renderer_uses_each_cells_pigment(view: FieldView) -> None:
     spacing = min(rectangle.width / 2, rectangle.height / 2)
     left = rectangle.centerx - spacing
     top = rectangle.centery - spacing
-    for index, pigment in enumerate(Pigment):
-        row, column = divmod(index, 2)
-        centre = (int(left + (column + 0.5) * spacing), int(top + (row + 0.5) * spacing))
-        assert view.surface.get_at(centre)[:3] == PIGMENT_COLOURS[pigment]
+    for cell, organ in zip(field.cells, field.geometry, strict=True):
+        centre = (round(left + organ.x * spacing), round(top + organ.y * spacing))
+        assert view.surface.get_at(centre)[:3] == PIGMENT_COLOURS[cell.pigment]
     assert (
         tuple((cell.pigment, cell.expansion, cell.target_expansion) for cell in field.cells)
         == original_state
@@ -259,7 +258,10 @@ def test_skin_blends_pigments_and_is_reversible(view: FieldView) -> None:
     integrated = pygame.image.tobytes(view.surface.subsurface(rectangle), "RGB")
     skin_values = [view.surface.get_at((x, 300)).r for x in range(200, 500)]
     assert integrated != original
-    assert pvariance(skin_values) < pvariance(detailed_values) / 10
+    # Suppress organ-scale edges without requiring washed-out broad colour contrast.
+    skin_edges = [right - left for left, right in zip(skin_values, skin_values[1:])]
+    detailed_edges = [right - left for left, right in zip(detailed_values, detailed_values[1:])]
+    assert pvariance(skin_edges) < pvariance(detailed_edges) / 10
     # Repeated drawing must start from the original discs, rather than blur again.
     view.draw(field, 60.0)
     assert pygame.image.tobytes(view.surface.subsurface(rectangle), "RGB") == integrated
@@ -303,7 +305,7 @@ def test_skin_contrast_strengthens_patches_without_changing_model(
     :param view: Headless renderer.
     :param monkeypatch: Fixture temporarily selecting raw averaging for comparison.
     """
-    from chromatophore_simulator import view as view_module
+    from chromatophore_simulator import skin_renderer as skin_module
 
     field = ChromatophoreField()
     field.apply_pattern(Pattern.CHECKERBOARD, Random(0))
@@ -312,7 +314,7 @@ def test_skin_contrast_strengthens_patches_without_changing_model(
     view.mode = ViewMode.SKIN
     view.draw(field, 60.0)
     enhanced = view.surface.copy()
-    monkeypatch.setattr(view_module, "SKIN_CONTRAST", 1.0)
+    monkeypatch.setattr(skin_module, "SKIN_CONTRAST", 1.0)
     view.draw(field, 60.0)
     # Compare within the occupied field, avoiding margins and UI labels.
     enhanced_values = [enhanced.get_at((x, 115)).r for x in range(130, 620)]
@@ -323,13 +325,27 @@ def test_skin_contrast_strengthens_patches_without_changing_model(
 
 
 @pytest.mark.parametrize("expansion", [0.0, 0.25, 0.5, 0.75, 1.0])
-def test_uniform_skin_has_no_sampling_grid(view: FieldView, expansion: float) -> None:
-    """Equal pigment tiles must produce a flat skin colour without raster aliasing.
+def test_uniform_skin_has_no_sampling_grid(
+    view: FieldView, expansion: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A regular equal-disc fixture stays flat, isolating raster artefacts from morphology.
 
     :param view: Headless renderer.
     :param expansion: Uniform expansion, including partially expanded discs.
     """
+    # Disable intended spatial variations to isolate unwanted sampling artefacts.
+    from chromatophore_simulator.morphology import OrganGeometry
+
+    monkeypatch.setattr("chromatophore_simulator.skin_renderer.IRIDOPHORE_STRENGTH", 0.0)
     field = ChromatophoreField()
+    field.geometry = tuple(
+        OrganGeometry(column + 0.5, row + 0.5, 0.45, index % 4)
+        for index, (row, column) in enumerate(
+            (row, column) for row in range(field.rows) for column in range(field.columns)
+        )
+    )
+    for index, cell in enumerate(field.cells):
+        cell.pigment = tuple(Pigment)[index % 4]
     field.set_expansion(expansion)
     field.update(4.0)
     view.mode = ViewMode.SKIN
@@ -378,3 +394,89 @@ def test_dynamic_controls(view: FieldView, use_mouse: bool) -> None:
         view.draw(field, 60)
     app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE), field, view, Random(0))
     assert field.dynamic is None
+
+
+@pytest.mark.parametrize("use_mouse", [False, True])
+def test_pigment_controls_and_reset(view: FieldView, use_mouse: bool) -> None:
+    """Mouse and keyboard change group levels without stopping the display.
+
+    :param view: Headless renderer and control layout.
+    :param use_mouse: Exercise clickable controls rather than number shortcuts.
+    """
+    from chromatophore_simulator.dynamics import DynamicDisplay
+    from chromatophore_simulator.view import PigmentAction
+
+    field = ChromatophoreField()
+    field.start_dynamic(DynamicDisplay.FLASH)
+    controller = field.dynamic
+    commands = ((Pigment.YELLOW, pygame.K_5), (PigmentAction.RESET, pygame.K_0))
+    for command, key in commands:
+        if use_mouse:
+            button = next(button for button in view.pigment_buttons if button.command is command)
+            event = pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN, button=1, pos=button.rectangle.center
+            )
+        else:
+            event = pygame.event.Event(pygame.KEYDOWN, key=key)
+        assert app.handle_event(event, field, view, Random(1))
+        assert field.dynamic is controller
+        assert field.pigment_levels[Pigment.YELLOW] == (0 if command is Pigment.YELLOW else 1)
+        assert all(
+            field.pigment_levels[pigment] == 1
+            for pigment in Pigment
+            if pigment is not Pigment.YELLOW
+        )
+    view.draw(field, 60)
+
+
+def test_skin_density_calibration_restores_mottle_colour(
+    view: FieldView, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fixed layout calibration strengthens mottle colour without changing organ state.
+
+    :param view: Headless renderer.
+    :param monkeypatch: Temporarily remove calibration for the regression comparison.
+    """
+    from chromatophore_simulator import skin_renderer as skin_module
+    from chromatophore_simulator.dynamics import DynamicDisplay
+
+    field = ChromatophoreField()
+    field.start_dynamic(DynamicDisplay.CHANGING_MOTTLE, Random(42))
+    for _ in range(480):
+        field.update(1 / 60)
+    before = tuple(astuple(cell) for cell in field.cells)
+    view.mode = ViewMode.SKIN
+    view.draw(field, 60)
+    corrected = [
+        view.surface.get_at((x, y)).r for y in range(90, 620, 10) for x in range(115, 650, 10)
+    ]
+    monkeypatch.setattr(skin_module, "_skin_coverage_gain", lambda field: 1.0)
+    view.draw(field, 60)
+    uncalibrated = [
+        view.surface.get_at((x, y)).r for y in range(90, 620, 10) for x in range(115, 650, 10)
+    ]
+    assert sum(corrected) / len(corrected) < sum(uncalibrated) / len(uncalibrated) - 8
+    assert pvariance(corrected) > pvariance(uncalibrated) * 1.5
+    assert tuple(astuple(cell) for cell in field.cells) == before
+
+
+@pytest.mark.parametrize("use_mouse", [False, True])
+def test_timing_control_preserves_targets(view: FieldView, use_mouse: bool) -> None:
+    """Both timing-control paths change kinetics without retargeting organs.
+
+    :param view: Headless control layout.
+    :param use_mouse: Use the header button instead of its keyboard shortcut.
+    """
+    field = ChromatophoreField()
+    field.set_expansion(1)
+    before = tuple(astuple(cell) for cell in field.cells)
+    if use_mouse:
+        event = pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN, button=1, pos=view.timing_buttons[0].rectangle.center
+        )
+    else:
+        event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_9)
+    assert app.handle_event(event, field, view, Random(1))
+    assert field.natural_timing
+    assert tuple(astuple(cell) for cell in field.cells) == before
+    view.draw(field, 60)

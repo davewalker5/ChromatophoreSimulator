@@ -2,11 +2,18 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from math import isfinite
+from math import exp, isfinite
 from random import Random
+from types import MappingProxyType
 
 from chromatophore_simulator.dynamics import DYNAMIC_STEP, DynamicController, DynamicDisplay
+from chromatophore_simulator.morphology import DEFAULT_LAYOUT_SEED, generate_layout
 from chromatophore_simulator.patterns import Pattern, generate_targets
+from chromatophore_simulator.timing import (
+    NATURAL_SETTLING_FACTOR,
+    NATURAL_SETTLING_THRESHOLD,
+    generate_response_profiles,
+)
 
 DEFAULT_ROWS = 50
 DEFAULT_COLUMNS = 50
@@ -21,11 +28,6 @@ class Pigment(Enum):
     BLACK = "Black"
 
 
-# Repeat this tile across the field so all four pigments occur in each 2 × 2 patch.
-# Alternating positions keep every organ visible without a layer drawing order.
-PIGMENT_TILE = ((Pigment.YELLOW, Pigment.RED), (Pigment.BROWN, Pigment.BLACK))
-
-
 def _validate_time(value: float) -> None:
     """Validate a duration measured in seconds.
 
@@ -38,7 +40,7 @@ def _validate_time(value: float) -> None:
 
 @dataclass(frozen=True, slots=True)
 class ResponseParameters:
-    """Rates in expansion units per second and delay in simulation seconds."""
+    """Base rates in 1/s and delay in seconds; uniform rates are expansion units/s."""
 
     # Increase in expansion per simulation second while moving towards a larger target.
     # Expansion spans 0 to 1, so 0.25/s takes four seconds for a full expansion.
@@ -111,17 +113,27 @@ class Chromatophore:
         self.target_expansion = expansion
         self._delay_remaining = response_delay if expansion != self.expansion else 0.0
 
-    def update(self, elapsed_seconds: float, response: ResponseParameters) -> None:
+    def update(
+        self,
+        elapsed_seconds: float,
+        response: ResponseParameters,
+        rate_scale: float = 1.0,
+        natural_timing: bool = False,
+    ) -> None:
         """Wait out latency, then move towards the target without overshooting.
 
         A changed target holds the current size during its delay. Repeated targets
         do not restart that delay. Rate changes affect the next movement update.
 
         :param elapsed_seconds: Finite, non-negative simulation time to advance.
-        :param response: Separate expansion and contraction rates.
-        :raises ValueError: If elapsed time is invalid.
+        :param response: Base rates; natural mode reaches 99% of a step in 1/rate seconds.
+        :param rate_scale: Positive dimensionless local timing multiplier.
+        :param natural_timing: Use exponential settling rather than constant-speed motion.
+        :raises ValueError: If elapsed time, scale or timing mode is invalid.
         """
         _validate_time(elapsed_seconds)
+        if not isfinite(rate_scale) or rate_scale <= 0 or type(natural_timing) is not bool:
+            raise ValueError("Rate scale must be positive and timing mode must be boolean")
 
         # Consume the waiting portion first, without letting the countdown go negative.
         # If the delay expires partway through this update, only the leftover time
@@ -135,10 +147,22 @@ class Chromatophore:
         difference = self.target_expansion - self.expansion
         rate = response.expansion_rate if difference > 0 else response.contraction_rate
 
-        # Rate is measured in expansion units per second, so multiplying by seconds
-        # gives this update's allowed change. At 0.25/s, 0.02 s allows a change of 0.005.
-        # Using elapsed time rather than a fixed step keeps speed independent of FPS.
-        maximum_change = rate * moving_seconds
+        # Natural motion integrates exponential settling exactly for this target.
+        # Uniform mode instead limits travel by rate × elapsed seconds. Neither
+        # curve depends on the rendering frame rate; dynamic targets use fixed steps.
+        if natural_timing:
+            if moving_seconds <= 0:
+                return
+            remaining = difference * exp(
+                -rate * rate_scale * NATURAL_SETTLING_FACTOR * moving_seconds
+            )
+            self.expansion = (
+                self.target_expansion
+                if abs(remaining) <= NATURAL_SETTLING_THRESHOLD
+                else self.target_expansion - remaining
+            )
+            return
+        maximum_change = rate * rate_scale * moving_seconds
 
         # Snap to the target when the remaining distance fits within this step. This
         # prevents overshoot and ensures we finish exactly at the requested expansion.
@@ -153,20 +177,22 @@ class Chromatophore:
 
 
 class ChromatophoreField:
-    """A regular row-major grid, with the origin at the upper-left corner."""
+    """Logical row-major targets with fixed, irregular physical organ geometry."""
 
     def __init__(
         self,
         rows: int = DEFAULT_ROWS,
         columns: int = DEFAULT_COLUMNS,
         response: ResponseParameters = ResponseParameters(),
+        layout_seed: int = DEFAULT_LAYOUT_SEED,
     ) -> None:
-        """Create contracted cells with four pigments alternating at fixed positions.
+        """Create contracted organs with a reproducible irregular layout.
 
         :param rows: Positive number of rows.
         :param columns: Positive number of columns.
         :param response: Validated response settings; may be replaced during a run.
-        :raises ValueError: If either dimension is not a positive integer.
+        :param layout_seed: Unsigned 32-bit seed for fixed organ morphology.
+        :raises ValueError: If a dimension or layout seed is invalid.
         """
         if any(type(size) is not int or size <= 0 for size in (rows, columns)):
             raise ValueError("Field dimensions must be positive integers")
@@ -174,16 +200,84 @@ class ChromatophoreField:
         self.columns = columns
         self.response = response
 
-        # Use row/column parity rather than flat index parity, so odd-width fields
-        # retain the same spatial tile. Each cell still owns its own state and delay.
+        self.geometry = generate_layout(rows, columns, layout_seed)
+        pigments = tuple(Pigment)
         self.cells = tuple(
-            Chromatophore(pigment=PIGMENT_TILE[row % 2][column % 2])
-            for row in range(rows)
-            for column in range(columns)
+            Chromatophore(pigment=pigments[organ.pigment_index]) for organ in self.geometry
         )
+        self.response_profiles = generate_response_profiles(self.geometry, layout_seed)
+        self._natural_timing = False
         self.target_description = "Contracted"
         self.dynamic: DynamicController | None = None
         self._dynamic_remainder = 0.0
+        self._pigment_levels = {pigment: 1.0 for pigment in Pigment}
+        self._source_targets = tuple(0.0 for _ in self.cells)
+
+    @property
+    def natural_timing(self) -> bool:
+        """Return whether smooth, locally coordinated timing is enabled."""
+        return self._natural_timing
+
+    def set_natural_timing(self, enabled: bool) -> None:
+        """Switch response kinetics without retargeting cells or resetting signal history.
+
+        Existing rates and delay countdowns remain unchanged, as do held sizes.
+
+        :param enabled: True for smooth local profiles; False for uniform linear motion.
+        :raises ValueError: If enabled is not boolean.
+        """
+        if type(enabled) is not bool:
+            raise ValueError("Natural timing must be boolean")
+        self._natural_timing = enabled
+
+    def _advance_cells(self, elapsed_seconds: float) -> None:
+        """Apply current kinetics to every organ without generating new targets.
+
+        :param elapsed_seconds: Validated non-negative simulation duration.
+        """
+        for cell, profile in zip(self.cells, self.response_profiles, strict=True):
+            scale = 1.0
+            if self._natural_timing:
+                scale = (
+                    profile.expansion_scale
+                    if cell.target_expansion > cell.expansion
+                    else profile.contraction_scale
+                )
+            cell.update(elapsed_seconds, self.response, scale, self._natural_timing)
+
+    @property
+    def pigment_levels(self) -> MappingProxyType[Pigment, float]:
+        """Return a read-only view of group target multipliers in [0, 1]."""
+        return MappingProxyType(self._pigment_levels)
+
+    def set_pigment_level(self, pigment: Pigment, level: float) -> None:
+        """Scale one pigment group's targets without changing current sizes.
+
+        Static targets retain their original source values, so repeated changes
+        never compound. Dynamic targets use the level on their next signal update.
+        A held field uses its frozen sizes as the new static source.
+
+        :param pigment: Group to control, retaining each organ's fixed identity.
+        :param level: Finite multiplier in [0, 1]; 1 preserves the source pattern.
+        :raises ValueError: If pigment or level is invalid; state is unchanged.
+        """
+        if not isinstance(pigment, Pigment):
+            raise ValueError("Pigment must be a member of Pigment")
+        _validate_expansion(level)
+        if level == self._pigment_levels[pigment]:
+            return
+        self._pigment_levels[pigment] = level
+        if self.dynamic is None:
+            for cell, source in zip(self.cells, self._source_targets, strict=True):
+                if cell.pigment is pigment:
+                    cell.set_target(source * level, self.response.response_delay)
+            if self.target_description == "Held":
+                self.target_description = "Pigment mix"
+
+    def reset_pigment_levels(self) -> None:
+        """Restore all group levels to 1, preserving current sizes and display phase."""
+        for pigment in Pigment:
+            self.set_pigment_level(pigment, 1.0)
 
     def start_dynamic(self, display: DynamicDisplay, random_source: Random | None = None) -> None:
         """Start a display from its initial phase without changing current sizes.
@@ -203,6 +297,7 @@ class ChromatophoreField:
         self._dynamic_remainder = 0.0
         for cell in self.cells:
             cell.set_target(cell.expansion, 0.0)
+        self._source_targets = tuple(cell.expansion for cell in self.cells)
         self.target_description = "Held"
 
     def set_targets(self, targets: tuple[float, ...]) -> None:
@@ -219,8 +314,11 @@ class ChromatophoreField:
         for target in targets:
             _validate_expansion(target)
         self.dynamic = None
-        for cell, target in zip(self.cells, targets, strict=True):
-            cell.set_target(target, self.response.response_delay)
+        self._source_targets = tuple(targets)
+        for cell, target in zip(self.cells, self._source_targets, strict=True):
+            cell.set_target(
+                target * self._pigment_levels[cell.pigment], self.response.response_delay
+            )
         self.target_description = "Custom"
 
     def apply_pattern(self, pattern: Pattern, random_source: Random) -> None:
@@ -240,9 +338,7 @@ class ChromatophoreField:
         :raises ValueError: If expansion is invalid; no cells are changed.
         """
         _validate_expansion(expansion)
-        self.dynamic = None
-        for cell in self.cells:
-            cell.set_target(expansion, self.response.response_delay)
+        self.set_targets(tuple(expansion for _ in self.cells))
         self.target_description = f"Uniform {expansion:.0%}"
 
     def randomise(self, random_source: Random) -> None:
@@ -250,9 +346,7 @@ class ChromatophoreField:
 
         :param random_source: Random generator, optionally seeded by the caller.
         """
-        self.dynamic = None
-        for cell in self.cells:
-            cell.set_target(random_source.random(), self.response.response_delay)
+        self.set_targets(tuple(random_source.random() for _ in self.cells))
         self.target_description = "Randomise"
 
     def update(self, elapsed_seconds: float) -> None:
@@ -272,9 +366,7 @@ class ChromatophoreField:
                 targets = self.dynamic.advance(DYNAMIC_STEP, self.response.response_delay)
                 if targets is not None:
                     for cell, target in zip(self.cells, targets, strict=True):
-                        cell.set_target(target, 0.0)
-                for cell in self.cells:
-                    cell.update(DYNAMIC_STEP, self.response)
+                        cell.set_target(target * self._pigment_levels[cell.pigment], 0.0)
+                self._advance_cells(DYNAMIC_STEP)
             return
-        for cell in self.cells:
-            cell.update(elapsed_seconds, self.response)
+        self._advance_cells(elapsed_seconds)

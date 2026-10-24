@@ -42,6 +42,37 @@ try {
   watch(page);
   await page.goto(url);
   await page.waitForFunction(() => !document.querySelector('#controls').disabled);
+  const sections = page.locator('details.control-section');
+  assert.deepEqual(
+    await sections.evaluateAll((items) => items.map((section) => section.open)),
+    [true, true, false, false, false, false],
+    'Only static and dynamic sections start expanded',
+  );
+  await page.screenshot({ path: `${output}/${engine}-collapsed-controls.png`, fullPage: true });
+  const summaries = sections.locator('summary');
+  await summaries.nth(2).focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await sections.nth(2).evaluate((section) => section.open), true);
+  await page.keyboard.press('Space');
+  assert.equal(await sections.nth(2).evaluate((section) => section.open), false);
+  assert.equal(await page.locator('#response-timing').isVisible(), false);
+  // Expand the remaining panels before exercising their existing form controls.
+  for (let index = 2; index < 6; index++) await summaries.nth(index).click();
+  assert.equal(await page.locator('#response-timing').inputValue(), 'natural');
+  assert.equal(await page.locator('#expansion-rate').inputValue(), '4');
+  assert.equal(await page.locator('#contraction-rate').inputValue(), '4');
+  assert.equal(await page.locator('[data-pigment]').count(), 4);
+  await page.locator('#pigment-yellow').selectOption('0.25');
+  assert.equal(await page.locator('#pigment-red').inputValue(), '1');
+  await page.getByRole('button', { name: 'Reset pigment levels', exact: true }).click();
+  assert.equal(await page.locator('#pigment-yellow').inputValue(), '1');
+  // Group edits can start movement even when initial reduced-motion state was settled.
+  await page.getByRole('button', { name: 'Hold current sizes' }).click();
+  await page.locator('#field').focus();
+  await page.keyboard.press('9');
+  assert.equal(await page.locator('#response-timing').inputValue(), 'uniform');
+  await page.keyboard.press('9');
+  assert.equal(await page.locator('#response-timing').inputValue(), 'natural');
   const initial = await canvasImage(page);
   await page.waitForTimeout(150);
   assert.equal(await canvasImage(page), initial, 'Reduced motion must start settled');
@@ -65,17 +96,46 @@ try {
     assert.equal(await page.locator('#display-speed').inputValue(), '1');
     await page.locator('#display-speed').selectOption('2');
   }
+  await page.locator('#view-angle').selectOption('30');
+  assert.equal(await page.locator('#current-pattern').textContent(), 'Changing mottle');
+  assert.equal(await page.locator('#display-speed').inputValue(), '2');
+  await page.getByRole('button', { name: 'Reset angles', exact: true }).click();
+  await page.locator('#response-timing').selectOption('uniform');
+  assert.equal(await page.locator('#current-pattern').textContent(), 'Changing mottle');
+  assert.equal(await page.locator('#display-speed').inputValue(), '2');
+  await page.locator('#response-timing').selectOption('natural');
+  await page.locator('#pigment-yellow').selectOption('0.25');
+  assert.equal(await page.locator('#current-pattern').textContent(), 'Changing mottle');
+  assert.equal(await page.locator('#display-speed').inputValue(), '2');
+  await page.getByRole('button', { name: 'Reset pigment levels', exact: true }).click();
   await page.getByRole('button', { name: 'Hold current sizes' }).click();
   const held = await canvasImage(page);
   await page.waitForTimeout(150);
   assert.equal(await canvasImage(page), held, 'Hold must stop changes');
   await page.getByRole('button', { name: 'Skin View', exact: true }).click();
   assert.notEqual(await canvasImage(page), held, 'Skin should render a different view');
+  const referenceSkin = await canvasImage(page);
+  await page.locator('#view-angle').selectOption('45');
+  assert.notEqual(await canvasImage(page), referenceSkin, 'Camera angle changes Skin View');
+  assert.equal(await page.locator('#current-pattern').textContent(), 'Held');
+  await page.locator('#light-angle').selectOption('-30');
+  assert.equal(await page.locator('#view-angle').inputValue(), '45');
+  await page.screenshot({ path: `${output}/${engine}-angled-skin.png`, fullPage: true });
+  await page.getByRole('button', { name: 'Reset angles', exact: true }).click();
+  assert.equal(await canvasImage(page), referenceSkin, 'Angle reset restores the same held skin');
   await page.screenshot({ path: `${output}/${engine}-skin.png`, fullPage: true });
   await page.getByRole('button', { name: 'Chromatophore View', exact: true }).click();
   assert.equal(await canvasImage(page), held, 'Switching view must preserve cell state');
 
   await page.locator('#field').focus();
+  await page.keyboard.press('a');
+  await page.keyboard.press('i');
+  assert.equal(await page.locator('#view-angle').inputValue(), '15');
+  assert.equal(await page.locator('#light-angle').inputValue(), '15');
+  assert.equal(await canvasImage(page), held, 'Diagnostic discs are independent of optical angles');
+  await page.keyboard.press('o');
+  assert.equal(await page.locator('#view-angle').inputValue(), '0');
+  assert.equal(await page.locator('#light-angle').inputValue(), '0');
   await page.keyboard.press('w');
   assert.equal(await page.locator('#current-pattern').textContent(), 'Travelling wave');
   await page.keyboard.press('4');
@@ -109,7 +169,8 @@ try {
     'solid',
   );
 
-  // Uniform pigment coverage should contain no sample-boundary grid in Skin View.
+  // Real irregular organs intentionally vary in colour. A regular diagnostic
+  // fixture isolates unintended sample seams from that physical variation.
   await page.locator('#expansion-rate').selectOption('4');
   await page.locator('#contraction-rate').selectOption('4');
   await page.getByRole('button', { name: 'Uniform', exact: true }).click();
@@ -117,16 +178,46 @@ try {
     () => document.querySelector('#activity').textContent === 'Pattern settled',
   );
   await page.getByRole('button', { name: 'Skin View', exact: true }).click();
-  const spread = await page.locator('#field').evaluate((canvas) => {
-    const pixels = canvas
+  const spread = await page.locator('#field').evaluate(async (canvas) => {
+    const { ChromatophoreField, Pigment } = await import('./js/model.js');
+    const { FieldView, ViewMode } = await import('./js/view.js');
+    const field = new ChromatophoreField();
+    field.geometry = field.geometry.map((_, index) => ({
+      x: (index % field.columns) + 0.5,
+      y: Math.floor(index / field.columns) + 0.5,
+      radiusRatio: 0.45,
+      pigmentIndex: index % 4,
+    }));
+    field.cells.forEach((cell, index) => {
+      cell.pigment = Object.values(Pigment)[index % 4];
+    });
+    field.setExpansion(0.5);
+    field.update(4);
+    const diagnostic = new FieldView(canvas);
+    diagnostic.mode = ViewMode.SKIN;
+    diagnostic.draw(field);
+    const { width, height, data } = canvas
       .getContext('2d')
-      .getImageData(10, 10, canvas.width - 20, canvas.height - 20).data;
+      .getImageData(0, 0, canvas.width, canvas.height);
     let difference = 0;
-    for (let i = 0; i < pixels.length; i++)
-      difference = Math.max(difference, Math.abs(pixels[i] - pixels[i % 4]));
+    for (let y = 10; y < height - 10; y++) {
+      for (let x = 10; x < width - 10; x++) {
+        const offset = (y * width + x) * 4;
+        for (let channel = 0; channel < 3; channel++) {
+          difference = Math.max(
+            difference,
+            Math.abs(data[offset + channel] - data[offset + 4 + channel]),
+            Math.abs(data[offset + channel] - data[offset + width * 4 + channel]),
+          );
+        }
+      }
+    }
     return difference;
   });
-  assert.ok(spread <= 1, `Uniform skin contains a visible grid: channel spread ${spread}`);
+  assert.ok(
+    spread <= 3,
+    `Uniform skin contains a sharp seam: adjacent-channel difference ${spread}`,
+  );
 
   // The real event handler is exercised with a controlled visibility property,
   // since headless browsers do not reproduce physical tab switching consistently.

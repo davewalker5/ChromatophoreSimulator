@@ -1,5 +1,11 @@
 /** Rendering-independent cell state. All durations are simulation seconds. */
 import { DYNAMIC_STEP, DynamicController, validateTime } from './dynamics.js';
+import {
+  generateResponseProfiles,
+  NATURAL_SETTLING_FACTOR,
+  NATURAL_SETTLING_THRESHOLD,
+} from './timing.js';
+import { DEFAULT_LAYOUT_SEED, generateLayout } from './morphology.js';
 import { generateTargets, validateDimensions } from './patterns.js';
 
 export const Pigment = Object.freeze({
@@ -8,11 +14,6 @@ export const Pigment = Object.freeze({
   BROWN: 'Brown',
   BLACK: 'Black',
 });
-const PIGMENT_TILE = [
-  [Pigment.YELLOW, Pigment.RED],
-  [Pigment.BROWN, Pigment.BLACK],
-];
-
 /**
  * Check normalised expansion before changing state.
  * @param {number} value - Requested current or target expansion.
@@ -80,18 +81,33 @@ export class Chromatophore {
   /**
    * Consume latency, then move towards the target without overshoot.
    * @param {number} elapsedSeconds - Non-negative duration of this update.
-   * @param {ResponseParameters} response - Validated rates, read on every update.
+   * @param {ResponseParameters} response - Rates; natural mode reaches 99% in 1/rate seconds.
+   * @param {number} rateScale - Positive local rate multiplier.
+   * @param {boolean} naturalTiming - Enable smooth exponential settling.
    * @throws {RangeError} If elapsed time is invalid.
    */
-  update(elapsedSeconds, response) {
+  update(elapsedSeconds, response, rateScale = 1, naturalTiming = false) {
     validateTime(elapsedSeconds);
+    if (!Number.isFinite(rateScale) || rateScale <= 0 || typeof naturalTiming !== 'boolean')
+      throw new RangeError('Rate scale must be positive and timing mode must be boolean');
     const waiting = Math.min(elapsedSeconds, this.delayRemaining);
     this.delayRemaining -= waiting;
     // A delay may finish partway through a frame. Only the remaining duration
     // contributes movement; at 0.25 units/s, a full expansion takes four seconds.
     const difference = this.targetExpansion - this.expansion;
     const rate = difference > 0 ? response.expansionRate : response.contractionRate;
-    const maximumChange = rate * (elapsedSeconds - waiting);
+    const movingSeconds = elapsedSeconds - waiting;
+    if (naturalTiming) {
+      if (movingSeconds <= 0) return;
+      const remaining =
+        difference * Math.exp(-rate * rateScale * NATURAL_SETTLING_FACTOR * movingSeconds);
+      this.expansion =
+        Math.abs(remaining) <= NATURAL_SETTLING_THRESHOLD
+          ? this.targetExpansion
+          : this.targetExpansion - remaining;
+      return;
+    }
+    const maximumChange = rate * rateScale * movingSeconds;
     if (Math.abs(difference) <= maximumChange) this.expansion = this.targetExpansion;
     else this.expansion += Math.sign(difference) * maximumChange;
   }
@@ -103,21 +119,91 @@ export class ChromatophoreField {
    * @param {number} rows - Positive height in cells.
    * @param {number} columns - Positive width in cells.
    * @param {ResponseParameters} response - Shared immutable response settings.
-   * @throws {RangeError} If dimensions are invalid.
+   * @param {number} layoutSeed - Unsigned 32-bit seed for fixed organ geometry.
+   * @throws {RangeError} If dimensions or layout seed are invalid.
    */
-  constructor(rows = 50, columns = 50, response = new ResponseParameters()) {
+  constructor(
+    rows = 50,
+    columns = 50,
+    response = new ResponseParameters(),
+    layoutSeed = DEFAULT_LAYOUT_SEED,
+  ) {
     validateDimensions(rows, columns);
     this.rows = rows;
     this.columns = columns;
     this.response = response;
-    this.cells = Array.from({ length: rows * columns }, (_, index) => {
-      // Row/column parity preserves the tile on odd-width fields as well.
-      const pigment = PIGMENT_TILE[Math.floor(index / columns) % 2][(index % columns) % 2];
-      return new Chromatophore(0, 0, pigment);
-    });
+    this.geometry = generateLayout(rows, columns, layoutSeed);
+    const pigments = Object.values(Pigment);
+    this.cells = this.geometry.map(
+      (organ) => new Chromatophore(0, 0, pigments[organ.pigmentIndex]),
+    );
+    this.responseProfiles = generateResponseProfiles(this.geometry, layoutSeed);
+    this._naturalTiming = false;
     this.targetDescription = 'Contracted';
     this.dynamic = null;
     this.dynamicRemainder = 0;
+    this._pigmentLevels = Object.fromEntries(Object.values(Pigment).map((pigment) => [pigment, 1]));
+    this.sourceTargets = new Float64Array(this.cells.length);
+  }
+
+  /** Whether smooth locally coordinated response kinetics are enabled. */
+  get naturalTiming() {
+    return this._naturalTiming;
+  }
+
+  /**
+   * Change kinetics without altering targets, delay countdowns, phase or chosen rates.
+   * @param {boolean} enabled - True for smooth local profiles; false for uniform motion.
+   * @throws {RangeError} If enabled is not boolean.
+   */
+  setNaturalTiming(enabled) {
+    if (typeof enabled !== 'boolean') throw new RangeError('Natural timing must be boolean');
+    this._naturalTiming = enabled;
+  }
+
+  /** Advance cells using fixed timing profiles; duration is already validated. */
+  _advanceCells(elapsedSeconds) {
+    this.cells.forEach((cell, index) => {
+      const profile = this.responseProfiles[index];
+      const scale = !this._naturalTiming
+        ? 1
+        : cell.targetExpansion > cell.expansion
+          ? profile.expansionScale
+          : profile.contractionScale;
+      cell.update(elapsedSeconds, this.response, scale, this._naturalTiming);
+    });
+  }
+
+  /** Return an immutable snapshot of group target multipliers in [0, 1]. */
+  get pigmentLevels() {
+    return Object.freeze({ ...this._pigmentLevels });
+  }
+
+  /**
+   * Scale one group's source targets; current sizes, other groups and phase remain intact.
+   * Static changes use the configured delay; dynamics apply levels on the next signal update.
+   * Held sizes become the static source. Repeated changes never compound multipliers.
+   * @param {string} pigment - Member of Pigment.
+   * @param {number} level - Finite target multiplier in [0, 1].
+   * @throws {RangeError} If pigment or level is invalid; state is unchanged.
+   */
+  setPigmentLevel(pigment, level) {
+    if (!Object.values(Pigment).includes(pigment)) throw new RangeError('Unknown pigment');
+    validateExpansion(level);
+    if (level === this._pigmentLevels[pigment]) return;
+    this._pigmentLevels[pigment] = level;
+    if (!this.dynamic) {
+      this.cells.forEach((cell, index) => {
+        if (cell.pigment === pigment)
+          cell.setTarget(this.sourceTargets[index] * level, this.response.responseDelay);
+      });
+      if (this.targetDescription === 'Held') this.targetDescription = 'Pigment mix';
+    }
+  }
+
+  /** Restore group levels to 1 without resetting current sizes or display phase. */
+  resetPigmentLevels() {
+    for (const pigment of Object.values(Pigment)) this.setPigmentLevel(pigment, 1);
   }
 
   /**
@@ -138,6 +224,7 @@ export class ChromatophoreField {
     this.dynamic = null;
     this.dynamicRemainder = 0;
     for (const cell of this.cells) cell.setTarget(cell.expansion);
+    this.sourceTargets = Float64Array.from(this.cells, (cell) => cell.expansion);
     this.targetDescription = 'Held';
   }
 
@@ -150,8 +237,13 @@ export class ChromatophoreField {
     if (targets.length !== this.cells.length) throw new RangeError('Target count must match cells');
     for (const target of targets) validateExpansion(target);
     this.dynamic = null;
+    this.sourceTargets = Float64Array.from(targets);
     for (let index = 0; index < this.cells.length; index++) {
-      this.cells[index].setTarget(targets[index], this.response.responseDelay);
+      const cell = this.cells[index];
+      cell.setTarget(
+        this.sourceTargets[index] * this._pigmentLevels[cell.pigment],
+        this.response.responseDelay,
+      );
     }
     this.targetDescription = 'Custom';
   }
@@ -204,12 +296,15 @@ export class ChromatophoreField {
         for (let index = 0; index < this.cells.length; index++) {
           // Delay already belongs to the signal history. A fresh per-cell delay
           // every frame would prevent cells from ever following a moving target.
-          if (targets) this.cells[index].setTarget(targets[index], 0);
-          this.cells[index].update(DYNAMIC_STEP, this.response);
+          if (targets) {
+            const cell = this.cells[index];
+            cell.setTarget(targets[index] * this._pigmentLevels[cell.pigment], 0);
+          }
         }
+        this._advanceCells(DYNAMIC_STEP);
       }
     } else {
-      for (const cell of this.cells) cell.update(elapsedSeconds, this.response);
+      this._advanceCells(elapsedSeconds);
     }
   }
 }
