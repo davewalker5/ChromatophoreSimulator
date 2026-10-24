@@ -18,7 +18,7 @@ import {
   sharpenSkin,
   pigmentReflections,
   SKIN_COLOUR,
-} from '../../explorer/js/view.js';
+} from '../../explorer/js/skin-renderer.js';
 
 test('skin sharpening preserves flat colours and strengthens edges without changing alpha', () => {
   const flat = new Uint8ClampedArray([120, 100, 80, 255]);

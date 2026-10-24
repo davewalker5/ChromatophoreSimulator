@@ -14,16 +14,18 @@ from chromatophore_simulator.reflection import (
     ReflectionSettings,
     reflection_responses,
 )
-from chromatophore_simulator.view import (
-    FIELD_RECT,
+from chromatophore_simulator.skin_renderer import (
     IRIDOPHORE_COLOUR,
     IRIDOPHORE_STRENGTH,
     SKIN_COLOUR,
+    iridophore_base,
+)
+from chromatophore_simulator.view import (
+    FIELD_RECT,
     WINDOW_SIZE,
     FieldView,
     ReflectionAction,
     ViewMode,
-    iridophore_base,
 )
 
 

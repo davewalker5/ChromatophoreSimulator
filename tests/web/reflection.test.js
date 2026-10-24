@@ -13,8 +13,9 @@ import {
   IRIDOPHORE_STRENGTH,
   SKIN_COLOUR,
   skinSamples,
+  EXPLORER_ANGULAR_CONTRAST,
   roundEven,
-} from '../../explorer/js/view.js';
+} from '../../explorer/js/skin-renderer.js';
 
 test('zero angles give a restrained reference across the entire skin', () => {
   const responses = reflectionResponses();
@@ -129,6 +130,46 @@ test('pigment attenuates angular changes and rendering leaves model state untouc
   field.update(4);
   const expandedDifference = difference();
   assert.ok(expandedDifference > 0 && expandedDifference < contractedDifference);
+});
+
+test('explorer enhancement preserves the reference and strengthens both angle controls', () => {
+  const field = new ChromatophoreField();
+  const state = JSON.stringify(field);
+  const reference = skinSamples(field).pixels;
+  const enhanced = (settings) =>
+    skinSamples(field, undefined, undefined, settings, EXPLORER_ANGULAR_CONTRAST).pixels;
+  assert.deepEqual(enhanced(new ReflectionSettings()), reference);
+  const difference = (pixels) =>
+    reference.reduce((sum, value, index) => sum + Math.abs(value - pixels[index]), 0);
+  for (const settings of [new ReflectionSettings(45, 0), new ReflectionSettings(0, 45)]) {
+    const optical = skinSamples(field, undefined, undefined, settings).pixels;
+    assert.ok(difference(enhanced(settings)) > 1.3 * difference(optical));
+  }
+  const settings = new ReflectionSettings(0, 45);
+  const contractedDifference = difference(enhanced(settings));
+  field.setExpansion(1);
+  field.update(4);
+  const front = enhanced(new ReflectionSettings());
+  const tilted = enhanced(settings);
+  const expandedDifference = front.reduce(
+    (sum, value, index) => sum + Math.abs(value - tilted[index]),
+    0,
+  );
+  assert.ok(expandedDifference > 0 && expandedDifference < contractedDifference);
+  assert.deepEqual(
+    enhanced(new ReflectionSettings(60, -60)),
+    skinSamples(field, undefined, 0).pixels,
+  );
+  assert.ok(JSON.stringify(field) !== state); // Only the explicit model update changed state.
+  const held = JSON.stringify(field);
+  enhanced(settings);
+  assert.equal(JSON.stringify(field), held);
+});
+
+test('invalid angular enhancement is rejected', () => {
+  const field = new ChromatophoreField();
+  for (const contrast of [0, -1, NaN, Infinity, true, '2'])
+    assert.throws(() => skinSamples(field, undefined, undefined, undefined, contrast), RangeError);
 });
 
 test('invalid camera and light angles are rejected', () => {

@@ -114,7 +114,7 @@ def reference_results():
     # interpolation is browser-dependent, but the analytical colours must agree.
     import pygame
 
-    from chromatophore_simulator.view import FieldView
+    from chromatophore_simulator.skin_renderer import draw_skin
 
     for rows, columns, view_angle, light_angle in [
         (1, 1, 0, 0),
@@ -128,9 +128,8 @@ def reference_results():
             field = ChromatophoreField(rows, columns)
             field.set_expansion(expansion)
             field.update(4)
-            renderer = FieldView.__new__(FieldView)
-            renderer.surface = pygame.Surface((550, 550))
-            renderer.reflection = ReflectionSettings(view_angle, light_angle)
+            surface = pygame.Surface((550, 550))
+            reflection = ReflectionSettings(view_angle, light_angle)
             captured = []
             original_scale = pygame.transform.smoothscale
 
@@ -145,9 +144,15 @@ def reference_results():
             # tune edge enhancement independently without changing the skin model.
             with (
                 patch("pygame.transform.smoothscale", capture_samples),
-                patch("chromatophore_simulator.view.SKIN_SHARPNESS", 0.0),
+                patch("chromatophore_simulator.skin_renderer.SKIN_SHARPNESS", 0.0),
             ):
-                renderer._draw_skin(pygame.Rect(0, 0, 550, 550), field, 550 / max(rows, columns))
+                draw_skin(
+                    surface,
+                    pygame.Rect(0, 0, 550, 550),
+                    field,
+                    550 / max(rows, columns),
+                    reflection,
+                )
             results["skin"].append(
                 {
                     "rows": rows,

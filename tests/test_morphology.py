@@ -10,7 +10,7 @@ import pytest
 from chromatophore_simulator.coverage import circle_rectangle_area
 from chromatophore_simulator.model import ChromatophoreField
 from chromatophore_simulator.morphology import MAXIMUM_RADIUS_RATIO, generate_layout
-from chromatophore_simulator.view import FieldView
+from chromatophore_simulator.skin_renderer import sample_pigment_areas
 
 
 @pytest.mark.parametrize("shape", [(1, 1), (1, 7), (7, 1), (3, 5), (50, 50)])
@@ -117,7 +117,7 @@ def test_sample_partition_preserves_all_pigment_area(span: int) -> None:
     for top in range(0, field.rows, span):
         for left in range(0, field.columns, span):
             bounds = (left, top, min(left + span, field.columns), min(top + span, field.rows))
-            area += sum(FieldView._sample_pigment_areas(field, 11, bounds).values())
+            area += sum(sample_pigment_areas(field, 11, bounds).values())
     assert area == pytest.approx(sum(pi * organ.radius_ratio**2 for organ in field.geometry))
 
 

@@ -112,7 +112,7 @@ test('invalid layout and coverage inputs are rejected', () => {
 
 test('skin density calibration restores reference area without tracking current expansion', async () => {
   const { skinCoverageGain, SKIN_REFERENCE_RADIUS_RATIO } = await import(
-    '../../explorer/js/view.js'
+    '../../explorer/js/skin-renderer.js'
   );
   const field = new ChromatophoreField();
   const gain = skinCoverageGain(field);
@@ -133,7 +133,7 @@ test('skin density calibration restores reference area without tracking current 
 });
 
 test('skin density calibration rejects empty or invalid geometry', async () => {
-  const { skinCoverageGain } = await import('../../explorer/js/view.js');
+  const { skinCoverageGain } = await import('../../explorer/js/skin-renderer.js');
   assert.throws(() => skinCoverageGain({ geometry: [] }), RangeError);
   for (const radiusRatio of [0, -1, NaN, Infinity]) {
     assert.throws(() => skinCoverageGain({ geometry: [{ radiusRatio }] }), RangeError);

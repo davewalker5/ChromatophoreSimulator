@@ -9,12 +9,12 @@ import pygame
 import pytest
 
 from chromatophore_simulator import app
+from chromatophore_simulator.chromatophore_renderer import PIGMENT_COLOURS
 from chromatophore_simulator.model import ChromatophoreField, Pigment, ResponseParameters
 from chromatophore_simulator.patterns import Pattern, generate_targets
 from chromatophore_simulator.view import (
     FIELD_RECT,
     PATTERN_SHORTCUTS,
-    PIGMENT_COLOURS,
     WINDOW_SIZE,
     FieldView,
     ViewMode,
@@ -305,7 +305,7 @@ def test_skin_contrast_strengthens_patches_without_changing_model(
     :param view: Headless renderer.
     :param monkeypatch: Fixture temporarily selecting raw averaging for comparison.
     """
-    from chromatophore_simulator import view as view_module
+    from chromatophore_simulator import skin_renderer as skin_module
 
     field = ChromatophoreField()
     field.apply_pattern(Pattern.CHECKERBOARD, Random(0))
@@ -314,7 +314,7 @@ def test_skin_contrast_strengthens_patches_without_changing_model(
     view.mode = ViewMode.SKIN
     view.draw(field, 60.0)
     enhanced = view.surface.copy()
-    monkeypatch.setattr(view_module, "SKIN_CONTRAST", 1.0)
+    monkeypatch.setattr(skin_module, "SKIN_CONTRAST", 1.0)
     view.draw(field, 60.0)
     # Compare within the occupied field, avoiding margins and UI labels.
     enhanced_values = [enhanced.get_at((x, 115)).r for x in range(130, 620)]
@@ -336,7 +336,7 @@ def test_uniform_skin_has_no_sampling_grid(
     # Disable intended spatial variations to isolate unwanted sampling artefacts.
     from chromatophore_simulator.morphology import OrganGeometry
 
-    monkeypatch.setattr("chromatophore_simulator.view.IRIDOPHORE_STRENGTH", 0.0)
+    monkeypatch.setattr("chromatophore_simulator.skin_renderer.IRIDOPHORE_STRENGTH", 0.0)
     field = ChromatophoreField()
     field.geometry = tuple(
         OrganGeometry(column + 0.5, row + 0.5, 0.45, index % 4)
@@ -437,7 +437,7 @@ def test_skin_density_calibration_restores_mottle_colour(
     :param view: Headless renderer.
     :param monkeypatch: Temporarily remove calibration for the regression comparison.
     """
-    from chromatophore_simulator import view as view_module
+    from chromatophore_simulator import skin_renderer as skin_module
     from chromatophore_simulator.dynamics import DynamicDisplay
 
     field = ChromatophoreField()
@@ -450,7 +450,7 @@ def test_skin_density_calibration_restores_mottle_colour(
     corrected = [
         view.surface.get_at((x, y)).r for y in range(90, 620, 10) for x in range(115, 650, 10)
     ]
-    monkeypatch.setattr(view_module, "_skin_coverage_gain", lambda field: 1.0)
+    monkeypatch.setattr(skin_module, "_skin_coverage_gain", lambda field: 1.0)
     view.draw(field, 60)
     uncalibrated = [
         view.surface.get_at((x, y)).r for y in range(90, 620, 10) for x in range(115, 650, 10)

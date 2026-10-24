@@ -3,7 +3,7 @@
 import pytest
 
 from chromatophore_simulator.model import Pigment
-from chromatophore_simulator.view import (
+from chromatophore_simulator.skin_renderer import (
     _linear_to_srgb,
     _pigment_reflections,
     _srgb_to_linear,
@@ -53,7 +53,10 @@ def test_pigments_filter_backing_light_by_colour() -> None:
 def test_skin_density_calibration_is_fixed_and_preserves_reference_area() -> None:
     """Smaller irregular organs receive fixed compensation, independent of animation."""
     from chromatophore_simulator.model import ChromatophoreField
-    from chromatophore_simulator.view import SKIN_REFERENCE_RADIUS_RATIO, _skin_coverage_gain
+    from chromatophore_simulator.skin_renderer import (
+        SKIN_REFERENCE_RADIUS_RATIO,
+        _skin_coverage_gain,
+    )
 
     field = ChromatophoreField()
     gain = _skin_coverage_gain(field)
@@ -73,7 +76,10 @@ def test_skin_density_calibration_leaves_regular_reference_unchanged() -> None:
     from dataclasses import replace
 
     from chromatophore_simulator.model import ChromatophoreField
-    from chromatophore_simulator.view import SKIN_REFERENCE_RADIUS_RATIO, _skin_coverage_gain
+    from chromatophore_simulator.skin_renderer import (
+        SKIN_REFERENCE_RADIUS_RATIO,
+        _skin_coverage_gain,
+    )
 
     field = ChromatophoreField(3, 5)
     field.geometry = tuple(

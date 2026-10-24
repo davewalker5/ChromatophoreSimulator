@@ -1,4 +1,19 @@
-"""Analytical circle coverage for integrating irregular organs without raster aliasing."""
+"""Calculate pigment coverage directly from circle/rectangle overlap areas.
+
+Skin View combines pigment contributions within rectangular samples. Each
+chromatophore is represented by a circular disc; its overlap area determines how
+much pigment it contributes to a sample, including fractional coverage at edges.
+Here, "irregular organs" means varying positions and sizes, not non-circular shapes.
+
+The overlap is calculated analytically from the circle geometry rather than by
+drawing discs onto a pixel grid and counting coloured pixels. Pixel counting can
+make tiny discs disappear or gain a whole pixel abruptly as they expand or move
+relative to the grid. Calculating areas directly avoids those raster-aliasing
+errors and gives more stable pigment blending, subject to floating-point precision.
+
+This module calculates coverage only. Pigment filtering, colour blending,
+sharpening and enlargement are handled separately by the renderer.
+"""
 
 from math import asin, isfinite, pi, sqrt
 
@@ -16,6 +31,7 @@ def _quadrant_area(x: float, y: float, radius: float) -> float:
     if width * width + height * height <= radius * radius:
         return sign * width * height
     transition = sqrt(max(0.0, radius * radius - height * height))
+
     # Beyond transition, the circular arc rather than rectangle height bounds area.
     upper = width * sqrt(max(0.0, radius * radius - width * width))
     lower = transition * height
