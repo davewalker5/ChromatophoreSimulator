@@ -189,7 +189,6 @@ test('expanded pigment attenuates but preserves filtered iridophore reflection',
   const reflected = skinSamples(field).pixels;
   const bare = skinSamples(field, undefined, 0).pixels;
   let patches = 0;
-  let pale = 0;
   for (let offset = 0; offset < reflected.length; offset += 4) {
     const redDrop = bare[offset] - reflected[offset];
     const blueDrop = bare[offset + 2] - reflected[offset + 2];
@@ -197,10 +196,9 @@ test('expanded pigment attenuates but preserves filtered iridophore reflection',
       patches++;
       assert.ok(redDrop > blueDrop, 'Reflection adds a blue-green cast');
     }
-    if (redDrop === 0) pale++;
+    assert.ok(redDrop <= 20, 'Reference sheen stays restrained across the field');
   }
-  assert.ok(patches > 0, 'Localised reflective patches remain visible');
-  assert.ok(pale > 0, 'Backing remains pale away from patches');
+  assert.equal(patches, reflected.length / 4, 'Reflective coverage reaches the entire skin');
   const retractedDifference = Math.max(...bare.map((value, index) => value - reflected[index]));
   field.setExpansion(1);
   field.update(4);

@@ -10,14 +10,13 @@ import { ChromatophoreField } from '../../explorer/js/model.js';
 import {
   iridophoreBase,
   IRIDOPHORE_COLOUR,
-  IRIDOPHORE_PATCHES,
   IRIDOPHORE_STRENGTH,
   SKIN_COLOUR,
   skinSamples,
   roundEven,
 } from '../../explorer/js/view.js';
 
-test('zero angles preserve the existing reference palette exactly', () => {
+test('zero angles give a restrained reference across the entire skin', () => {
   const responses = reflectionResponses();
   assert.ok(responses.every((response) => response.strength === 1));
   assert.ok(
@@ -33,15 +32,27 @@ test('zero angles preserve the existing reference palette exactly', () => {
     [0.5, 0.5],
     [1, 1],
   ]) {
-    const patch = Math.max(
-      ...IRIDOPHORE_PATCHES.map(([cx, cy, rx, ry]) =>
-        Math.exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)),
-      ),
-    );
     const previous = SKIN_COLOUR.map((base, channel) =>
-      roundEven(base + IRIDOPHORE_STRENGTH * patch * (IRIDOPHORE_COLOUR[channel] - base)),
+      roundEven(base + IRIDOPHORE_STRENGTH * (IRIDOPHORE_COLOUR[channel] - base)),
     );
     assert.deepEqual(iridophoreBase(undefined, x, y), previous);
+  }
+});
+
+test('both angle controls produce visible directional contrast', () => {
+  assert.ok(reflectionResponses(new ReflectionSettings(60, 0))[24].strength < 0.35);
+  assert.ok(reflectionResponses(new ReflectionSettings(0, 60))[24].strength < 0.18);
+  const aligned = reflectionResponses(new ReflectionSettings(30, 0));
+  assert.ok(aligned[27].strength > 2.5 * aligned[21].strength);
+});
+
+test('angled highlights remain visible after backing blending', () => {
+  const front = iridophoreBase(undefined, 0.05, 0.5);
+  for (const settings of [new ReflectionSettings(-45, 0), new ReflectionSettings(0, -45)]) {
+    const responses = reflectionResponses(settings);
+    assert.ok(responses[21].strength > 1.8);
+    const angled = iridophoreBase(undefined, 0.05, 0.5, responses);
+    assert.ok(Math.max(...front.map((value, channel) => Math.abs(value - angled[channel]))) > 12);
   }
 });
 
@@ -49,14 +60,33 @@ test('angles select reflector orientations and shift the reflected hue towards b
   const front = reflectionResponses();
   const tilted = reflectionResponses(new ReflectionSettings(60, 0));
   assert.ok(tilted[1].colour[2] / tilted[1].colour[1] > front[1].colour[2] / front[1].colour[1]);
-  assert.ok(tilted[1].strength < front[1].strength);
+  assert.ok(tilted[24].strength < front[24].strength);
   const right = reflectionResponses(new ReflectionSettings(30, 0));
   const left = reflectionResponses(new ReflectionSettings(-30, 0));
-  assert.ok(right[2].strength > right[0].strength);
-  assert.ok(left[0].strength > left[2].strength);
+  assert.ok(right[27].strength > right[21].strength);
+  assert.ok(left[21].strength > left[27].strength);
   const invisible = reflectionResponses(new ReflectionSettings(60, -60));
   assert.ok(invisible.every((response) => response.strength === 0));
-  assert.deepEqual(iridophoreBase(undefined, 0.24, 0.3, invisible), SKIN_COLOUR);
+  assert.deepEqual(iridophoreBase(undefined, 0.05, 0.5, invisible), SKIN_COLOUR);
+});
+
+test('angular sheen covers much of the skin and blends smoothly at region boundaries', () => {
+  const before = reflectionResponses(new ReflectionSettings(-45, 0));
+  const after = reflectionResponses(new ReflectionSettings(45, 0));
+  let changed = 0;
+  for (let row = 0; row <= 10; row++) {
+    for (let column = 0; column <= 10; column++) {
+      const x = column / 10,
+        y = row / 10;
+      const first = iridophoreBase(undefined, x, y, before);
+      const second = iridophoreBase(undefined, x, y, after);
+      if (Math.max(...first.map((value, channel) => Math.abs(value - second[channel]))) >= 10)
+        changed++;
+      const nearby = iridophoreBase(undefined, Math.min(1, x + 0.001), y, after);
+      assert.ok(second.every((value, channel) => Math.abs(value - nearby[channel]) <= 1));
+    }
+  }
+  assert.ok(changed >= 80);
 });
 
 test('responses remain bounded, immutable and continuous throughout supported angles', () => {
@@ -64,7 +94,7 @@ test('responses remain bounded, immutable and continuous throughout supported an
     for (const light of ANGLE_PRESETS) {
       const responses = reflectionResponses(new ReflectionSettings(view, light));
       assert.ok(Object.isFrozen(responses) && responses.every(Object.isFrozen));
-      assert.ok(responses.every((response) => response.strength >= 0 && response.strength <= 1.3));
+      assert.ok(responses.every((response) => response.strength >= 0 && response.strength <= 2.9));
       assert.ok(
         responses.every((response) => response.colour.every((value) => value >= 0 && value <= 255)),
       );

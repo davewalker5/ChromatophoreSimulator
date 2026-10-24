@@ -6,6 +6,7 @@ import {
   reflectionResponses,
   DEFAULT_REFLECTION_RESPONSES,
   REFERENCE_REFLECTION_COLOUR,
+  REFLECTOR_CENTRES,
 } from './reflection.js';
 
 export const LOGICAL_SIZE = 550;
@@ -13,17 +14,18 @@ export const SKIN_COLOUR = Object.freeze([235, 232, 220]);
 // Common cuttlefish-inspired sRGB palette, with neutral daylight (D65) as the target.
 // Illustrative colours rather than measured reflectance; Black represents dark brown.
 export const IRIDOPHORE_COLOUR = REFERENCE_REFLECTION_COLOUR;
-export const IRIDOPHORE_STRENGTH = 0.28;
-
-// Illustrative mantle patches, not an anatomical map. Coordinates are normalised.
-export const IRIDOPHORE_PATCHES = Object.freeze([
-  Object.freeze([0.24, 0.3, 0.15, 0.24]),
-  Object.freeze([0.76, 0.36, 0.13, 0.22]),
-  Object.freeze([0.48, 0.78, 0.22, 0.12]),
-]);
+// Distributed coverage needs a gentler reference fraction than isolated patches.
+export const IRIDOPHORE_STRENGTH = 0.14;
+const IRIDOPHORE_REGION_RADIUS = 0.24;
+export const IRIDOPHORE_PATCHES = Object.freeze(
+  REFLECTOR_CENTRES.map(([x, y]) =>
+    Object.freeze([x, y, IRIDOPHORE_REGION_RADIUS, IRIDOPHORE_REGION_RADIUS]),
+  ),
+);
 
 /**
- * Mix the strongest local reflective patch into the backing before pigment filtering.
+ * Average overlapping reflective regions into the backing before pigment filtering.
+ * Normalised spatial weights avoid bright seams, edge gaps and overlap accumulation.
  * @param {number} strength - Reference reflection fraction in [0, 1].
  * @param {number} x - Normalised horizontal position in [0, 1].
  * @param {number} y - Normalised vertical position in [0, 1].
@@ -42,18 +44,23 @@ export function iridophoreBase(
     angularResponses.length !== IRIDOPHORE_PATCHES.length
   )
     throw new RangeError('Invalid reflection strength, position or response count');
-  const contributions = IRIDOPHORE_PATCHES.map(
-    ([cx, cy, rx, ry], index) =>
-      Math.exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)) *
-      angularResponses[index].strength,
+  const weights = IRIDOPHORE_PATCHES.map(([cx, cy, rx, ry]) =>
+    Math.exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)),
   );
-  let index = 0;
-  for (let candidate = 1; candidate < contributions.length; candidate++) {
-    if (contributions[candidate] > contributions[index]) index = candidate;
-  }
-  const amount = Math.max(0, Math.min(1, strength * contributions[index]));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const amounts = weights.map(
+    (weight, index) =>
+      (weight / totalWeight) *
+      Math.max(0, Math.min(1, strength * angularResponses[index].strength)),
+  );
   return SKIN_COLOUR.map((base, channel) =>
-    roundEven(base + amount * (angularResponses[index].colour[channel] - base)),
+    roundEven(
+      base +
+        amounts.reduce(
+          (sum, amount, index) => sum + amount * (angularResponses[index].colour[channel] - base),
+          0,
+        ),
+    ),
   );
 }
 export const PIGMENT_COLOURS = Object.freeze({

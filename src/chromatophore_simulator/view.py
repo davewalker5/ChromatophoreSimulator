@@ -15,6 +15,7 @@ from chromatophore_simulator.patterns import Pattern
 from chromatophore_simulator.reflection import (
     DEFAULT_REFLECTION_RESPONSES,
     REFERENCE_REFLECTION_COLOUR,
+    REFLECTOR_CENTRES,
     AngularReflection,
     ReflectionSettings,
     reflection_responses,
@@ -31,14 +32,12 @@ HEADER_TEXT_LEFT = 102
 BACKGROUND = (24, 32, 37)
 SKIN_COLOUR = (235, 232, 220)
 IRIDOPHORE_COLOUR = REFERENCE_REFLECTION_COLOUR
-IRIDOPHORE_STRENGTH = 0.28  # Reference-angle reflection beneath pigment.
-
-# Sepia officinalis-inspired palette under neutral daylight (D65 target).
-# Illustrative sRGB values, not measured reflectance. Black represents dark brown.
-IRIDOPHORE_PATCHES = (
-    (0.24, 0.3, 0.15, 0.24),
-    (0.76, 0.36, 0.13, 0.22),
-    (0.48, 0.78, 0.22, 0.12),
+# A lower reference fraction keeps a distributed layer restrained: the previous
+# 0.28 fraction was confined to three small patches, with mostly pale gaps.
+IRIDOPHORE_STRENGTH = 0.14
+IRIDOPHORE_REGION_RADIUS = 0.24
+IRIDOPHORE_PATCHES = tuple(
+    (x, y, IRIDOPHORE_REGION_RADIUS, IRIDOPHORE_REGION_RADIUS) for x, y in REFLECTOR_CENTRES
 )
 
 
@@ -49,8 +48,9 @@ def iridophore_base(
 ) -> tuple[int, ...]:
     """Mix local structural reflection into the pale backing before pigment filtering.
 
-    The strongest spatial patch wins, preserving the original reference-angle
-    appearance. Reflection strength is capped so this remains a bounded mixture.
+    Overlapping regions are averaged by spatial weight. Normalising the weights
+    avoids bright grid seams, gaps at the edges and accumulation from overlaps.
+    Reflection strength is capped so this remains a bounded mixture.
 
     :param x: Normalised horizontal coordinate in [0, 1].
     :param y: Normalised vertical coordinate in [0, 1].
@@ -62,15 +62,26 @@ def iridophore_base(
         raise ValueError("Skin coordinates must be finite and between 0 and 1")
     if len(angular_responses) != len(IRIDOPHORE_PATCHES):
         raise ValueError("Angular response count must match iridophore patches")
-    contributions = tuple(
-        exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)) * response.strength
-        for (cx, cy, rx, ry), response in zip(IRIDOPHORE_PATCHES, angular_responses, strict=True)
+    weights = tuple(
+        exp(-2 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2))
+        for cx, cy, rx, ry in IRIDOPHORE_PATCHES
     )
-    index = max(range(len(contributions)), key=contributions.__getitem__)
-    strength = max(0.0, min(1.0, IRIDOPHORE_STRENGTH * contributions[index]))
+    total_weight = sum(weights)
+    # Blend each region's bounded colour contribution, rather than selecting a
+    # winner: nearby orientations then transition smoothly as the angles change.
+    amounts = tuple(
+        weight / total_weight * max(0.0, min(1.0, IRIDOPHORE_STRENGTH * response.strength))
+        for weight, response in zip(weights, angular_responses, strict=True)
+    )
     return tuple(
-        round(backing + strength * (reflection - backing))
-        for backing, reflection in zip(SKIN_COLOUR, angular_responses[index].colour, strict=True)
+        round(
+            backing
+            + sum(
+                amount * (response.colour[channel] - backing)
+                for amount, response in zip(amounts, angular_responses, strict=True)
+            )
+        )
+        for channel, backing in enumerate(SKIN_COLOUR)
     )
 
 

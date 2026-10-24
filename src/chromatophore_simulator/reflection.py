@@ -1,13 +1,24 @@
 """Angle-dependent iridophore response for a fixed, planar optical cross-section."""
 
 from dataclasses import dataclass
-from math import cos, exp, isfinite, radians, sin, sqrt
+from math import cos, exp, isfinite, pi, radians, sin, sqrt
 
 MAXIMUM_ANGLE_DEGREES = 60.0
 ANGLE_PRESETS = (-60.0, -45.0, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0, 60.0)
-PATCH_NORMAL_DEGREES = (-12.0, 0.0, 15.0)
-REFLECTOR_SPREAD_DEGREES = 22.0
-DIFFUSE_REFLECTION_FRACTION = 0.2
+# Overlapping regions cover the whole skin. Their preferred platelet normals
+# vary smoothly across the field, rather than forming three isolated highlights.
+# This is an illustrative orientation field, not measured anatomy or skin relief.
+REFLECTOR_GRID_SIZE = 7
+REFLECTOR_CENTRES = tuple(
+    (column / (REFLECTOR_GRID_SIZE - 1), row / (REFLECTOR_GRID_SIZE - 1))
+    for row in range(REFLECTOR_GRID_SIZE)
+    for column in range(REFLECTOR_GRID_SIZE)
+)
+PATCH_NORMAL_DEGREES = tuple(
+    25 * sin(pi * (x - 0.5)) * cos(0.6 * pi * (y - 0.5)) for x, y in REFLECTOR_CENTRES
+)
+REFLECTOR_SPREAD_DEGREES = 16.0
+DIFFUSE_REFLECTION_FRACTION = 0.08
 WATER_REFRACTIVE_INDEX = 1.33
 EFFECTIVE_REFRACTIVE_INDEX = 1.5
 NORMAL_PEAK_WAVELENGTH_NM = 500.0
@@ -30,7 +41,7 @@ class ReflectionSettings:
 
     Both signed directions lie in the same plane: positive points to the right.
     They adjust reflection only, not perspective, organ positions or illumination
-    of the diagnostic discs. Zero/zero preserves the previous appearance.
+    of the diagnostic discs. Zero/zero defines the reference reflection strength.
     """
 
     view_angle: float = 0.0

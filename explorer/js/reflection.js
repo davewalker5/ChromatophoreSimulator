@@ -1,9 +1,24 @@
 /** Illustrative angle-dependent optics in one plane through a flat skin normal. */
 export const MAXIMUM_ANGLE_DEGREES = 60;
 export const ANGLE_PRESETS = Object.freeze([-60, -45, -30, -15, 0, 15, 30, 45, 60]);
-export const PATCH_NORMAL_DEGREES = Object.freeze([-12, 0, 15]);
-const REFLECTOR_SPREAD_DEGREES = 22;
-const DIFFUSE_REFLECTION_FRACTION = 0.2;
+// Overlapping regions cover the skin with smoothly varying preferred platelet
+// normals. This is an illustrative orientation field, not measured skin relief.
+const REFLECTOR_GRID_SIZE = 7;
+export const REFLECTOR_CENTRES = Object.freeze(
+  Array.from({ length: REFLECTOR_GRID_SIZE ** 2 }, (_, index) =>
+    Object.freeze([
+      (index % REFLECTOR_GRID_SIZE) / (REFLECTOR_GRID_SIZE - 1),
+      Math.floor(index / REFLECTOR_GRID_SIZE) / (REFLECTOR_GRID_SIZE - 1),
+    ]),
+  ),
+);
+export const PATCH_NORMAL_DEGREES = Object.freeze(
+  REFLECTOR_CENTRES.map(
+    ([x, y]) => 25 * Math.sin(Math.PI * (x - 0.5)) * Math.cos(0.6 * Math.PI * (y - 0.5)),
+  ),
+);
+const REFLECTOR_SPREAD_DEGREES = 16;
+const DIFFUSE_REFLECTION_FRACTION = 0.08;
 const WATER_REFRACTIVE_INDEX = 1.33;
 const EFFECTIVE_REFRACTIVE_INDEX = 1.5;
 const NORMAL_PEAK_WAVELENGTH_NM = 500;
